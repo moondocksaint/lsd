@@ -22,7 +22,7 @@ from lsd.backends import get_visual_backend
 from lsd.classifier import classify
 from lsd.fetcher import fetch
 from lsd.models import IngestionMode
-from lsd.pipeline import build
+from lsd.pipeline import build, prepare
 from lsd.router import route
 
 console = Console()
@@ -33,7 +33,7 @@ def main() -> None:
     """LSD — Link-to-Skill Designer.\n\nTurn any webpage into a reusable Claude skill package."""
 
 
-@main.command()
+@main.command(name="build")
 @click.argument("url")
 @click.option(
     "--output", "-o",
@@ -72,36 +72,30 @@ def build_cmd(
         transient=True,
     ) as progress:
 
-        task = progress.add_task("Fetching...", total=None)
+        progress.add_task("Fetching, classifying, routing...", total=None)
         try:
-            fetch_result = fetch(url)
+            routing = prepare(url, mode_override)
         except Exception as exc:
             console.print(f"[red]Fetch failed:[/red] {exc}")
             raise SystemExit(1) from exc
 
-        progress.update(task, description="Classifying...")
-        source_fit = classify(fetch_result)
-
-        progress.update(task, description="Routing...")
-        visual_backend = get_visual_backend()
-        visual_available = visual_backend is not None
-        chosen_mode, routing_notes = route(
-            fetch_result, source_fit, visual_available, override=mode_override
-        )
+    fetch_result = routing.fetch
+    source_fit = routing.source_fit
+    visual_backend = routing.visual_backend
 
     # Summary table
     table = Table(show_header=False, box=None, padding=(0, 1))
     table.add_row("[dim]URL[/dim]", fetch_result.canonical_url)
     table.add_row("[dim]Title[/dim]", fetch_result.title[:80])
     table.add_row("[dim]Words[/dim]", str(fetch_result.word_count))
-    table.add_row("[dim]Mode[/dim]", f"[bold cyan]{chosen_mode}[/bold cyan]")
+    table.add_row("[dim]Mode[/dim]", f"[bold cyan]{routing.mode}[/bold cyan]")
     table.add_row("[dim]Fit[/dim]", source_fit.overall_fit)
     table.add_row(
         "[dim]Visual backend[/dim]",
         f"[green]{visual_backend.name}[/green]" if visual_backend else "[yellow]none (text-first only)[/yellow]",
     )
     console.print(table)
-    console.print(f"[dim]{routing_notes}[/dim]")
+    console.print(f"[dim]{routing.routing_notes}[/dim]")
 
     if dry_run:
         console.print("\n[yellow]Dry run — no files written.[/yellow]")
@@ -122,7 +116,7 @@ def build_cmd(
     ) as progress:
         progress.add_task("Building package...", total=None)
         try:
-            result_dir = build(url, out_dir, mode_override=mode_override)
+            result_dir = build(url, out_dir, mode_override=mode_override, routing=routing)
         except Exception as exc:
             console.print(f"[red]Build failed:[/red] {exc}")
             raise SystemExit(1) from exc
@@ -164,10 +158,6 @@ def check_cmd(url: str) -> None:
 def version() -> None:
     """Show LSD version."""
     console.print(f"lsd {__version__}")
-
-
-# Alias: `lsd build` is the primary command but also callable as `lsd <url>`
-main.add_command(build_cmd, name="build")
 
 
 def _slugify(text: str) -> str:

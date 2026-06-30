@@ -6,21 +6,50 @@ This is what the CLI calls. It can also be called programmatically.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from lsd.backends import TextBackend, get_visual_backend
+from lsd.backends import get_visual_backend
+from lsd.backends.base import IngestionBackend
 from lsd.classifier import classify
 from lsd.fetcher import fetch
-from lsd.models import BuildContext, IngestionMode, IngestionResult
+from lsd.models import BuildContext, FetchResult, IngestionMode, IngestionResult, SourceFit
 from lsd.opportunity_mapper import map_opportunities
 from lsd.router import route
 from lsd.writer import write_package
+
+
+@dataclass
+class Routing:
+    """Results of the fetch → classify → route phase, reusable by build()."""
+    fetch: FetchResult
+    source_fit: SourceFit
+    visual_backend: IngestionBackend | None
+    mode: IngestionMode
+    routing_notes: str
+
+
+def prepare(url: str, mode_override: IngestionMode | None = None) -> Routing:
+    """Run fetch → classify → route once and return the combined result.
+
+    This is the network-touching phase. Callers that need the routing
+    summary before deciding whether to build can call this, then pass the
+    result into build() to avoid a second live fetch.
+    """
+    fetch_result = fetch(url)
+    source_fit = classify(fetch_result)
+    visual_backend = get_visual_backend()
+    mode, routing_notes = route(
+        fetch_result, source_fit, visual_backend is not None, override=mode_override
+    )
+    return Routing(fetch_result, source_fit, visual_backend, mode, routing_notes)
 
 
 def build(
     url: str,
     output_dir: Path,
     mode_override: IngestionMode | None = None,
+    routing: Routing | None = None,
 ) -> Path:
     """Run the full LSD build pipeline for a URL.
 
@@ -28,22 +57,20 @@ def build(
         url: The URL to build a skill from.
         output_dir: Where to write the skill package.
         mode_override: Force a specific ingestion mode.
+        routing: Pre-computed fetch/classify/route result. When provided,
+            the live fetch is skipped and these results are reused.
 
     Returns:
         The path to the written package directory.
     """
-    # 1. Fetch
-    fetch_result = fetch(url)
+    if routing is None:
+        routing = prepare(url, mode_override)
 
-    # 2. Classify
-    source_fit = classify(fetch_result)
-
-    # 3. Route
-    visual_backend = get_visual_backend()
-    visual_available = visual_backend is not None
-    mode, routing_notes = route(
-        fetch_result, source_fit, visual_available, override=mode_override
-    )
+    fetch_result = routing.fetch
+    source_fit = routing.source_fit
+    visual_backend = routing.visual_backend
+    mode = routing.mode
+    routing_notes = routing.routing_notes
 
     # 4. Ingest visual (if applicable)
     visual_result = None
