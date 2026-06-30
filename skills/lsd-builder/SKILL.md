@@ -1,72 +1,273 @@
 ---
-name: LSD — Link-to-Skill Designer
-version: 0.1.0
-summary: Turn any URL into a complete, reusable Claude skill package with source tracking and governance.
-description: Use this skill when given a URL and asked to build a Claude skill from it. The skill fetches and preserves the source, classifies what kind of skill the page can support, chooses the right ingestion mode, extracts and normalises the content, compiles a complete skill package, and registers a source dependency for future updates.
-allowed-tools: Read, Write, Edit
+name: lsd-builder
+description: >
+  Build a structured, versioned agent skill package from one or more source URLs
+  using LSD (Link-to-Skill Distiller). Load this skill whenever the user says
+  "build a skill from", "distill this URL into a skill", "run lsd build", "create
+  a skill package from a link", "generate a skill from", or provides one or more
+  URLs and asks to turn them into an agent skill. Also load when the user asks to
+  check a skill package for staleness ("lsd check"), run an eval against a baseline
+  ("lsd eval"), or inspect the source-dependency layer of a package.
+compatibility:
+  tools: [bash]
+  requires_env: [LSD_LLM_PROVIDER, LSD_MODEL]
 ---
 
-## Purpose
+# LSD Builder Skill
 
-Convert a webpage into a reusable Claude skill package. Produce all package files with correct source tracking, governance policy, and versioning from the first run.
+LSD (Link-to-Skill Distiller) converts one or more source URLs into a versioned,
+structured agent skill package. Each package contains a `SKILL.md` (loadable by
+any agent), provenance metadata, source-dependency tracking, and optionally a
+conflict report (multi-source builds).
 
-## When to use
+Load `references/provider-config.md` for LLM provider setup.
+Load `references/output-schema.md` for the full package file schema.
+Load `references/rubric.md` for eval scoring criteria.
 
-Use when:
-- the user provides a URL and asks for a skill, reviewer, advisor, or workflow tool based on that page,
-- a rules-rich, procedure-rich, or heuristic-rich page needs to be turned into a repeatable Claude behaviour,
-- or an existing skill package needs to be refreshed against a changed source.
+---
 
-## Core principles
+## Quick start
 
-1. Preserve before transforming. Archive or record the source before compiling anything.
-2. Classify before compiling. Decide what kind of skill the page supports before writing SKILL.md.
-3. Choose ingestion mode deliberately. Text-first, hybrid, and visual-first serve different source types.
-4. Package everything. A skill without source tracking is not a complete output.
-5. Never silently update. Source changes require classification and review before promotion.
+```bash
+# Single source
+lsd build https://example.com/docs/api --output ./my-skill/
 
-## Workflow
+# Multi-source (conflict detection enabled automatically)
+lsd build https://source1.com https://source2.com --output ./my-skill/
 
-1. **Fetch and preserve**: Retrieve the page. Record canonical URL, title, and timestamp. Archive if possible.
-2. **Normalise**: Extract the operationally relevant content into a clean normalised text artifact.
-3. **Classify source fit**: Score rule density, procedure density, example density, stability, specificity, and composability.
-4. **Map opportunities**: Produce a ranked list of candidate skill types the page can support.
-5. **Choose ingestion mode**: Route to text-first, hybrid, or visual-first based on source structure signals.
-6. **Extract content**: Pull rules, procedures, examples, caveats, and workflow families from the source.
-7. **Compile SKILL.md**: Write the skill using the canonical format.
-8. **Write package files**: Produce source.md, metadata.json, source-policy.md, skill-opportunities.md, extraction-report.md, CHANGELOG.md.
-9. **Register source dependency**: Populate metadata.json with URL, hash, timestamps, fallback order, and governance policy.
+# Check a package for drift (normalized_hash changed)
+lsd check ./my-skill/
 
-## Ingestion mode routing (quick reference)
+# Eval against a committed expected/ snapshot
+lsd eval tests/cases/my-case/
+```
 
-| Mode | Use when |
-|---|---|
-| text-first | Prose-heavy, parser-friendly, headings and lists extract cleanly |
-| hybrid | Repo pages, important tables or code blocks, layout carries structure |
-| visual-first | Dashboard-like, canvas-heavy, diagram-dominant, parser-hostile |
+---
 
-## Output format
+## Installation
 
-A directory named after the skill containing:
-- SKILL.md
-- source.md
-- metadata.json
-- source-policy.md
-- skill-opportunities.md
-- extraction-report.md
-- CHANGELOG.md
-- visual/ (hybrid and visual-first only)
+```bash
+pip install lsd
+# or from source:
+git clone https://github.com/moondocksaint/lsd
+cd lsd && pip install -e .
+```
 
-## Style rules
+---
 
-- SKILL.md must be self-contained. A reader should not need to see the source page to use the skill.
-- metadata.json must validate against `schema/metadata.schema.json`.
-- source-policy.md must specify a fallback order with at least two entries.
-- Every package starts at version 0.1.0.
+## LLM provider setup
 
-## Caveats
+LSD uses environment variables for all provider configuration. No config file
+is needed. See `references/provider-config.md` for the full list of providers
+and env var combinations.
 
-- LSD is a design tool, not a deployment tool. Review generated skills before use.
-- Source preservation quality depends on the page's rendering complexity.
-- The opportunity map is a recommendation. The final skill form is a human decision.
-- Do not promote a skill update without classifying the source change first.
+**Minimal setup (OpenAI-compatible provider):**
+```bash
+export LSD_LLM_PROVIDER=openai-compat
+export LSD_LLM_BASE_URL=https://api.openai.com/v1   # or any compatible endpoint
+export LSD_LLM_API_KEY=sk-...
+export LSD_MODEL=gpt-4o
+```
+
+**Inception dLLM (mercury-2):**
+```bash
+export LSD_LLM_PROVIDER=openai-compat
+export LSD_LLM_BASE_URL=https://api.inceptionlabs.ai/v1
+export LSD_LLM_API_KEY=sk-...
+export LSD_MODEL=mercury-2
+export LSD_OMIT_MAX_TOKENS=1   # Inception does not support max_tokens
+```
+
+**Anthropic:**
+```bash
+export LSD_LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+export LSD_MODEL=claude-3-5-sonnet-20241022
+```
+
+---
+
+## Output package structure
+
+A single-source build produces:
+
+```
+<output-dir>/
+  SKILL.md              # Loadable skill — Core principle, Workflow, Output format
+  README.md             # Agent entry point: version, compiler_model, update workflow
+  source.md             # Full normalized source text
+  metadata.json         # Source dependency, compiler_model, artifact manifest
+  source-policy.md      # Update policy and fallback chain
+  skill-opportunities.md # Detected skill-building opportunities in the source
+  extraction-report.md  # Pipeline run summary
+  CHANGELOG.md          # Package-level change log
+```
+
+A multi-source build additionally produces:
+
+```
+  source-1.md … source-N.md   # Per-source normalized text
+  sources-index.md             # Table of all sources with fetch status
+  conflicts.md                 # Cross-source conflicts: gaps, contradictions, overlaps
+  index.md                     # Package overview
+```
+
+See `references/output-schema.md` for field-level documentation.
+
+---
+
+## Source-dependency tracking (LSD moat)
+
+Every package records a `source_dependency` block in `metadata.json`:
+
+```json
+{
+  "source_dependency": {
+    "url": "https://example.com/docs/api",
+    "normalized_hash": "sha256:abc123...",
+    "last_checked_at": "2026-06-30T10:00:00Z",
+    "update_policy": "check-monthly",
+    "fallback_chain": ["https://web.archive.org/..."]
+  }
+}
+```
+
+`lsd check` re-fetches the URL and compares `normalized_hash`. If the hash has
+changed, it reports drift and recommends a rebuild. No other skill-building tool
+tracks this layer.
+
+`README.md` inside the package includes a "Version & update workflow" section
+that any agent can read to determine whether the package needs refreshing.
+
+---
+
+## Multi-source conflict detection
+
+When two or more URLs are passed to `lsd build`, the conflict detector runs
+automatically and writes `conflicts.md`. Three conflict types are detected:
+
+| Type | Description |
+|------|-------------|
+| `gap` | A heading/topic present in one source is absent from another |
+| `contradiction` | Negation patterns near shared key terms suggest opposing claims |
+| `overlap` | Near-duplicate sentences indicating redundant coverage |
+
+The user (or agent) must resolve conflicts before the distilled `SKILL.md` can
+be trusted. Resolution guidance is written into `conflicts.md`.
+
+---
+
+## Modular retrieval backend
+
+Multi-source builds route through a pluggable retrieval backend:
+
+```
+src/lsd/retrieval/
+  base.py          # RetrievalBackend ABC  (index / retrieve)
+  naive.py         # NaiveRetrievalBackend — full-context stuffing, 50K token guard
+  __init__.py      # get_retrieval_backend() factory + registry
+```
+
+**Swap-candidate criteria (when to replace NaiveRetrievalBackend):**
+- Combined token estimate exceeds 50K tokens AND quality degrades (rubric < 12/14)
+- A dense-vector or BM25 backend achieves measurably higher rubric scores at equal
+  cost on the eval suite
+- A NotebookLM-quality RAG API becomes accessible via a simple HTTP call
+
+To add a new backend: subclass `RetrievalBackend`, implement `index()` and
+`retrieve()`, and register it in `get_retrieval_backend()`.
+
+**CLI flags:**
+```bash
+lsd build <urls> --retrieval-backend naive   # default
+lsd build <urls> --token-threshold 100000    # override token budget
+```
+
+---
+
+## Modular LLM backend
+
+```
+src/lsd/llm/
+  base.py            # LLMBackend ABC
+  anthropic.py       # AnthropicBackend
+  openai_compat.py   # OpenAICompatBackend (covers OpenRouter, Inception,
+                     #   Groq, Together, Ollama, LM Studio, vLLM, any
+                     #   OpenAI-compatible surface)
+  __init__.py        # get_llm_backend() factory
+```
+
+**Swap-candidate criteria (when to add a new LLM backend):**
+- A new provider offers a substantially better price/quality ratio on the eval
+  rubric (target: ≥12/14 at lower cost)
+- A new diffusion LLM or structured-output-native model achieves higher rubric
+  scores on the SKILL.md generation task
+- OpenRouter gains a provider not yet covered by the `openai-compat` path
+
+To add a new provider: subclass `LLMBackend`, implement `complete()`, and add
+a branch in `get_llm_backend()`.
+
+---
+
+## Modular PixelRAG backend
+
+```
+src/lsd/backends/
+  pixelrag.py        # PixelRAGBackend — renders URL to image tiles,
+                     #   then extracts text via vision LLM
+  text.py            # TextBackend — default HTTP fetch + HTML/PDF parse
+```
+
+**Swap-candidate criteria (when to replace PixelRAGBackend):**
+- A new screenshot-to-structured-data API achieves better extraction fidelity on
+  rendered/JS-heavy pages
+- PixelRAG (PyPI: `pixelrag-render`) releases a version with a changed API surface
+- A vision model substantially outperforms the current tile-based approach
+
+**Note on PixelRAG API (as of v0.4):**
+```python
+from pixelrag_render import render_url
+tiles = render_url(url, output_dir=str(out))
+```
+Package: `pixelrag-render` v0.3.0 (Berkeley SkyLab).
+
+---
+
+## Eval harness
+
+```bash
+lsd eval tests/cases/<case-name>/
+```
+
+Scores the current pipeline output against a committed `expected/` snapshot:
+
+- Rubric scoring: 7 criteria × 2 points = 14 max (see `references/rubric.md`)
+- Diff: normalizes timestamps → `__TIMESTAMP__` and content hashes →
+  `__CONTENT_HASH__` on both sides before comparing
+- `SKILL.md` is the only expected DIFFER (non-deterministic LLM prose)
+- Quality gate: rubric ≥ 12/14
+
+---
+
+## Versioning and `compiler_model` provenance
+
+`compiler_model` is a first-class field in three places:
+
+1. `SKILL.md` YAML frontmatter: `compiler_model: api/mercury-2`
+2. `metadata.json`: `package.compiler_model`
+3. `README.md` provenance table
+
+This lets any agent loading the skill package know which model generated the
+distilled content, enabling reproducibility audits and trust calibration.
+
+---
+
+## v0.5 roadmap items
+
+See `ROADMAP.md` in the repository root for the full backlog. Key upcoming items:
+
+- **NotebookLM-quality RAG** — plug-in replacement for `NaiveRetrievalBackend`
+  when the combined token budget is exceeded or rubric scores plateau
+- **Timestamp-aware source watching** — agents check `README.md` → `normalized_hash`
+  to detect drift without re-running the full pipeline
+- **pyproject.toml version bump** — currently `0.2.0`, should track package version
