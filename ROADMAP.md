@@ -6,6 +6,48 @@ meta-skill for Claude/Cursor/Codex environments, and a hosted web product for ev
 
 ---
 
+## Architectural principles
+
+These apply across the entire roadmap and should be enforced at every PR.
+
+### LSD owns the contracts, not the implementations
+
+Every stage that touches an external technique — visual rendering, retrieval, LLM compilation
+— sits behind an ABC with a narrow, stable interface. The default implementation ships with
+the package. Alternatives are drop-in: implement the interface, register in the factory,
+done. Nothing upstream changes.
+
+This pattern already exists in `backends/` for visual rendering. It extends to `retrieval/`
+(v0.4) and will extend to `compiler/` if/when multiple LLM backends are needed.
+
+### Swap-candidate criteria (universal)
+
+Any pluggable component — visual backend, retrieval backend, or LLM compiler backend —
+becomes a candidate for replacement when **any one** of the following is true:
+
+1. **Quality regression**: the current implementation scores materially worse than an
+   alternative on the regression harness (v0.4 eval suite). Threshold: >10% drop in rubric
+   score on the standard case set, or a new technique demonstrably beats it by >15%.
+2. **Maintenance signal**: no upstream releases for 6+ months, open CVEs, or the project
+   is archived/abandoned.
+3. **Constraint change**: a new deployment target (serverless, air-gapped, browser-native)
+   makes the current dependency chain untenable.
+4. **Paradigm shift**: a new approach collapses two pipeline steps into one with equal or
+   better quality (e.g. a vision-native model that renders-and-reads in a single pass,
+   eliminating the separate screenshot + embed steps).
+
+When a trigger is met: implement the alternative behind the existing interface, run it
+through the regression harness side-by-side with the current default, document the
+delta, and promote only if the results justify the migration cost.
+
+### The pipeline is the source of truth
+
+`pipeline.build()` is the canonical implementation. The CLI, the web API, and the
+meta-skill are all shells around it. Any change to pipeline behavior must be reflected
+in all three surfaces and covered by the regression harness before merging.
+
+---
+
 ## Where we are right now — v0.1 ✅
 
 The text-first pipeline is fully implemented and working end-to-end.
@@ -43,7 +85,7 @@ Implementation notes:
 - Output is a filled SKILL.md that passes the existing 14-point quality rubric in `tests/rubric.md`
 - Keep the heuristic skeleton as a fallback when no API key is present (offline mode)
 
-### PixelRAG backend fix
+### Visual rendering backend fix and modularity
 
 Rewrite `backends/pixelrag.py` against the actual `pixelrag` API surface:
 - Install: `pip install pixelrag` (core) or `pip install 'pixelrag[playwright]'` (full rendering)
@@ -51,6 +93,19 @@ Rewrite `backends/pixelrag.py` against the actual `pixelrag` API surface:
 - Output: tiled JPEGs at `<dir>/<stem>.png.tiles/tile_NNNN.jpg` + `tiles.json` manifest
 - Use `--tile-height 1568 --wait-network-idle` for JS-heavy pages
 - Update `pyproject.toml` visual extra: `pixelrag[playwright]`
+
+The existing `backends/` adapter pattern already makes visual rendering modular — the
+`IngestionBackend` ABC in `backends/base.py` is the seam. This is intentional and permanent:
+LSD owns the pipeline contracts, not the rendering implementation. Future backends (a
+native Playwright backend, a cloud screenshot API, a future vision-native renderer) are
+drop-in replacements that implement `render()` and `is_available()` and register in
+`backends/__init__.py`. Nothing upstream changes.
+
+Swap-candidate triggers follow the universal criteria in the Architectural principles
+section above. For this backend specifically, trigger #4 (paradigm shift) is the most
+likely: a vision-native model that renders-and-reads in a single pass would eliminate
+the screenshot-then-embed two-step. To swap: write `backends/<name>.py`, register it
+in `backends/__init__.py`, run regression harness side-by-side, promote if justified.
 
 ### Source type expansion: links to non-HTML content
 
@@ -172,6 +227,12 @@ zero operational overhead.
 The active backend is selected via `--retrieval-backend` flag or `retrieval.backend` in a
 project config file. New backends are registered in `retrieval/__init__.py` — no changes
 needed anywhere else in the pipeline.
+
+Swap-candidate triggers follow the universal criteria in the Architectural principles
+section above. For retrieval specifically, trigger #1 (quality) is the most actionable:
+the v0.4 eval suite scores every retrieval backend on grounding accuracy (claim → source
+passage hit rate) and recall across the standard case set. Any new technique that beats
+the default by >15% on that metric is a promotion candidate.
 
 This is the path to NotebookLM-quality grounding. Every compiled section cites its source
 passage + URL + character range, regardless of which backend produced the retrieval.
