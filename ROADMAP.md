@@ -135,16 +135,46 @@ Wire the existing `tests/cases/*/` structure into a real diff-based eval:
 - Quantitative scoring against `tests/rubric.md` (14-point quality rubric)
 - CI gate: block merges if rubric score drops below threshold
 
-### RAG-grounded compilation
+### RAG-grounded compilation — modular retrieval backend
 
-For multi-source skills where combined source exceeds context window:
-- Chunk sources into ~512-token passages with provenance metadata
-- Embed with a lightweight model (e.g. `text-embedding-3-small`)
-- At compile time, retrieve the top-K most relevant passages per section being written
-- Every compiled section cites its source passage + URL + line range
+Retrieval techniques are improving fast. The implementation must be pluggable: a concrete
+technique ships as the v0.4 default, but it can be swapped out entirely without touching
+the compiler or any other pipeline stage.
 
-This is the path to NotebookLM-quality grounding without requiring a hosted vector DB —
-the index lives in the package directory alongside the source files.
+The seam follows the same pattern as `backends/` for visual ingestion — an abstract base
+class with a narrow interface:
+
+```python
+class RetrievalBackend(ABC):
+    @abstractmethod
+    def index(self, sources: list[IndexedSource]) -> RetrievalIndex: ...
+
+    @abstractmethod
+    def retrieve(self, index: RetrievalIndex, query: str, k: int) -> list[Passage]: ...
+```
+
+`Passage` always carries: text, source file path, canonical URL, and character offset —
+provenance is never lost regardless of which backend produced it. The compiler never calls
+an embedding model directly; it always calls `retrieve()`.
+
+**v0.4 default implementation**: chunk → embed with a lightweight model → FAISS flat index
+stored inside the package directory (no hosted infrastructure required). Passable quality,
+zero operational overhead.
+
+**Pluggable alternatives** (drop-in, same interface):
+- `PixelRAGRetrievalBackend` — calls `api.pixelrag.ai` or a local PixelRAG serve instance;
+  retrieves over screenshot tiles rather than text chunks (better for visual-heavy sources)
+- `BM25RetrievalBackend` — sparse keyword retrieval; fast, no GPU, good for structured docs
+- `ColBERTRetrievalBackend` — late-interaction dense retrieval; higher accuracy on long docs
+- `HostedAPIRetrievalBackend` — delegates to any OpenAI-compatible `/embeddings` + vector DB
+- `OllamaRetrievalBackend` — local embeddings via Ollama for offline / air-gapped mode
+
+The active backend is selected via `--retrieval-backend` flag or `retrieval.backend` in a
+project config file. New backends are registered in `retrieval/__init__.py` — no changes
+needed anywhere else in the pipeline.
+
+This is the path to NotebookLM-quality grounding. Every compiled section cites its source
+passage + URL + character range, regardless of which backend produced the retrieval.
 
 ### Source refresh and diff
 
