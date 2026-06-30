@@ -1,0 +1,10 @@
+{
+  "url": "https://github.com/StarTrail-org/PixelRAG",
+  "output_mode": "full_package",
+  "ingestion_mode_override": null,
+  "context": {
+    "project_memory": false,
+    "related_skills": ["AI Writing Tells Reviewer"],
+    "user_intent": "Build an ingestion-advisor skill using the PixelRAG repo as the primary source."
+  }
+}

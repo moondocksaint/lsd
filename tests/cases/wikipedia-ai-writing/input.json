@@ -1,0 +1,10 @@
+{
+  "url": "https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing",
+  "output_mode": "full_package",
+  "ingestion_mode_override": null,
+  "context": {
+    "project_memory": false,
+    "related_skills": [],
+    "user_intent": "Build a reviewer skill for AI-style writing patterns."
+  }
+}

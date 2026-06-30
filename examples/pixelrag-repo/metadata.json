@@ -1,0 +1,73 @@
+{
+  "package": {
+    "name": "Visual Web-Ingestion Advisor",
+    "version": "0.1.0",
+    "generated_at": "2026-06-30T09:39:00Z",
+    "builder_skill_version": "0.1.0",
+    "output_mode": "full_package"
+  },
+  "source_dependency": {
+    "canonical_url": "https://github.com/StarTrail-org/PixelRAG",
+    "source_title": "GitHub - StarTrail-org/PixelRAG: The end of web parsing. The beginning of scalable pixel-native search.",
+    "active_source_version": "source_v1",
+    "local_source_file": "source.md",
+    "last_checked_at": "2026-06-30T09:39:00Z",
+    "last_successful_fetch_at": "2026-06-30T09:39:00Z",
+    "normalized_hash": "placeholder-hash-pixelrag-v1",
+    "archive_urls": [],
+    "update_mode": "monitored",
+    "promotion_policy": "manual_approval",
+    "fallback_order": ["local_copy", "wayback_snapshot", "secondary_archive", "previous_version"]
+  },
+  "ingestion": {
+    "mode": "hybrid",
+    "text_extraction_confidence": "medium",
+    "visual_extraction_enabled": true,
+    "reconciliation_required": true,
+    "visual_artifacts": ["visual/rendered-page.png", "visual/tiles/"],
+    "routing_notes": "Repository pages carry meaning in prose, code blocks, command tables, and UI structure. Hybrid preservation preferable to pure text flattening."
+  },
+  "source_fit": {
+    "overall_fit": "high",
+    "rule_density": "medium",
+    "procedure_density": "high",
+    "example_density": "medium",
+    "stability": "medium",
+    "specificity": "high",
+    "composability": "high",
+    "fit_notes": "Best suited for workflow, integration-planning, and ingestion-advisor skills rather than direct domain-rule extraction."
+  },
+  "opportunity_summary": {
+    "recommended_action": "build_one_skill",
+    "recommended_skill_type": "ingestion_advisor",
+    "candidate_skill_types": [
+      {"type": "visual_ingestion_advisor", "confidence": "high", "build_timing": "now", "why_fit": "Source explicitly argues for screenshot-native retrieval and explains when it matters.", "needed_extras": ["routing thresholds", "test corpus examples"]},
+      {"type": "integration_planner", "confidence": "high", "build_timing": "now", "why_fit": "Repository provides install paths, command structure, and workflow stages.", "needed_extras": ["deployment target", "resource assumptions"]},
+      {"type": "reference_companion", "confidence": "medium", "build_timing": "later", "why_fit": "Useful command and workflow snippets.", "needed_extras": ["linked documentation index"]}
+    ]
+  },
+  "governance": {
+    "criticality": "medium",
+    "review_required_for_promotion": true,
+    "auto_update_threshold": "never",
+    "change_classification_policy": "trivial_moderate_material",
+    "policy_notes": "Commands, workflow stages, and plugin instructions should trigger review on any change."
+  },
+  "context_used": {
+    "project_memory": false,
+    "project_files": true,
+    "project_instructions": false,
+    "related_skills": true,
+    "user_preferences": true,
+    "context_notes": "Hybrid-ingestion companion example to the text-first Wikipedia package."
+  },
+  "artifacts": {
+    "skill_file": "SKILL.md",
+    "source_file": "source.md",
+    "source_policy_file": "source-policy.md",
+    "opportunity_map_file": "skill-opportunities.md",
+    "extraction_report_file": "extraction-report.md",
+    "changelog_file": "CHANGELOG.md",
+    "visual_files": ["visual/rendered-page.png", "visual/tiles/"]
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "package": {
+    "name": "AI Writing Tells Reviewer",
+    "version": "0.1.0",
+    "generated_at": "2026-06-30T09:00:00Z",
+    "builder_skill_version": "0.1.0",
+    "output_mode": "full_package"
+  },
+  "source_dependency": {
+    "canonical_url": "https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing",
+    "source_title": "Wikipedia:Signs of AI writing - Wikipedia",
+    "active_source_version": "source_v1",
+    "local_source_file": "source.md",
+    "last_checked_at": "2026-06-30T09:00:00Z",
+    "last_successful_fetch_at": "2026-06-30T09:00:00Z",
+    "normalized_hash": "placeholder-hash-wikipedia-v1",
+    "archive_urls": [],
+    "update_mode": "monitored",
+    "promotion_policy": "manual_approval",
+    "fallback_order": ["local_copy", "wayback_snapshot", "secondary_archive", "previous_version"]
+  },
+  "ingestion": {
+    "mode": "text-first",
+    "text_extraction_confidence": "high",
+    "visual_extraction_enabled": false,
+    "reconciliation_required": false,
+    "routing_notes": "Prose-heavy, parser-friendly wiki page. All meaningful content is in text."
+  },
+  "source_fit": {
+    "overall_fit": "high",
+    "rule_density": "high",
+    "procedure_density": "low",
+    "example_density": "high",
+    "stability": "medium",
+    "specificity": "high",
+    "composability": "medium",
+    "fit_notes": "Excellent source for reviewer and rewriter skills. Heuristics are explicit, example-rich, and well-caveated."
+  },
+  "opportunity_summary": {
+    "recommended_action": "build_one_skill",
+    "recommended_skill_type": "reviewer",
+    "candidate_skill_types": [
+      {"type": "reviewer", "confidence": "high", "build_timing": "now", "why_fit": "Page is explicitly heuristic and example-rich.", "needed_extras": []},
+      {"type": "rewriter", "confidence": "high", "build_timing": "now", "why_fit": "Heuristics map directly to rewrite targets.", "needed_extras": []},
+      {"type": "editor_companion", "confidence": "medium", "build_timing": "later", "why_fit": "Could guide ongoing editing practice.", "needed_extras": ["house style context"]}
+    ]
+  },
+  "governance": {
+    "criticality": "medium",
+    "review_required_for_promotion": true,
+    "auto_update_threshold": "never",
+    "change_classification_policy": "trivial_moderate_material",
+    "policy_notes": "Heuristic and caveat changes should trigger review. New signal categories are material changes."
+  },
+  "context_used": {
+    "project_memory": false,
+    "project_files": true,
+    "project_instructions": false,
+    "related_skills": false,
+    "user_preferences": true,
+    "context_notes": "Text-dominant control example for the dual-ingestion design."
+  },
+  "artifacts": {
+    "skill_file": "SKILL.md",
+    "source_file": "source.md",
+    "source_policy_file": "source-policy.md",
+    "opportunity_map_file": "skill-opportunities.md",
+    "extraction_report_file": "extraction-report.md",
+    "changelog_file": "CHANGELOG.md"
+  }
+}

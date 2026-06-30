@@ -1,0 +1,114 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LSD Package Metadata",
+  "type": "object",
+  "required": ["package", "source_dependency", "ingestion", "source_fit", "opportunity_summary", "governance", "artifacts"],
+  "properties": {
+    "package": {
+      "type": "object",
+      "required": ["name", "version", "generated_at"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "builder_skill_version": { "type": "string" },
+        "output_mode": { "type": "string", "enum": ["skill_only", "full_package", "opportunity_map_only"] }
+      }
+    },
+    "source_dependency": {
+      "type": "object",
+      "required": ["canonical_url", "source_title", "local_source_file", "last_checked_at"],
+      "properties": {
+        "canonical_url": { "type": "string", "format": "uri" },
+        "source_title": { "type": "string" },
+        "active_source_version": { "type": "string" },
+        "local_source_file": { "type": "string" },
+        "last_checked_at": { "type": "string", "format": "date-time" },
+        "last_successful_fetch_at": { "type": "string", "format": "date-time" },
+        "normalized_hash": { "type": "string" },
+        "archive_urls": { "type": "array", "items": { "type": "string" } },
+        "update_mode": { "type": "string", "enum": ["monitored", "pinned", "manual"] },
+        "promotion_policy": { "type": "string", "enum": ["auto", "manual_approval", "blocked"] },
+        "fallback_order": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ingestion": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["text-first", "hybrid", "visual-first"] },
+        "text_extraction_confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+        "visual_extraction_enabled": { "type": "boolean" },
+        "reconciliation_required": { "type": "boolean" },
+        "visual_artifacts": { "type": "array", "items": { "type": "string" } },
+        "routing_notes": { "type": "string" }
+      }
+    },
+    "source_fit": {
+      "type": "object",
+      "properties": {
+        "overall_fit": { "type": "string", "enum": ["high", "medium", "low"] },
+        "rule_density": { "type": "string", "enum": ["high", "medium", "low"] },
+        "procedure_density": { "type": "string", "enum": ["high", "medium", "low"] },
+        "example_density": { "type": "string", "enum": ["high", "medium", "low"] },
+        "stability": { "type": "string", "enum": ["high", "medium", "low"] },
+        "specificity": { "type": "string", "enum": ["high", "medium", "low"] },
+        "composability": { "type": "string", "enum": ["high", "medium", "low"] },
+        "fit_notes": { "type": "string" }
+      }
+    },
+    "opportunity_summary": {
+      "type": "object",
+      "properties": {
+        "recommended_action": { "type": "string", "enum": ["build_one_skill", "build_multiple_skills", "opportunity_map_only", "defer"] },
+        "recommended_skill_type": { "type": "string" },
+        "candidate_skill_types": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+              "build_timing": { "type": "string", "enum": ["now", "later", "defer"] },
+              "why_fit": { "type": "string" },
+              "needed_extras": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "properties": {
+        "criticality": { "type": "string", "enum": ["high", "medium", "low"] },
+        "review_required_for_promotion": { "type": "boolean" },
+        "auto_update_threshold": { "type": "string", "enum": ["high", "medium", "low", "never"] },
+        "change_classification_policy": { "type": "string" },
+        "policy_notes": { "type": "string" }
+      }
+    },
+    "context_used": {
+      "type": "object",
+      "properties": {
+        "project_memory": { "type": "boolean" },
+        "project_files": { "type": "boolean" },
+        "project_instructions": { "type": "boolean" },
+        "related_skills": { "type": "boolean" },
+        "user_preferences": { "type": "boolean" },
+        "context_notes": { "type": "string" }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "skill_file": { "type": "string" },
+        "source_file": { "type": "string" },
+        "source_policy_file": { "type": "string" },
+        "opportunity_map_file": { "type": "string" },
+        "extraction_report_file": { "type": "string" },
+        "changelog_file": { "type": "string" },
+        "visual_files": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
