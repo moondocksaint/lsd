@@ -140,3 +140,44 @@ class MultiSourceBuildContext:
     output_dir: Path
     conflict_report: ConflictReport
     combined_opportunities: OpportunityMap
+
+
+# ---------------------------------------------------------------------------
+# v0.4 — Retrieval types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Passage:
+    """A retrieved text chunk with full provenance.
+
+    Provenance is never lost regardless of which RetrievalBackend produced
+    the passage — the compiler always cites source_url + char_offset.
+    """
+    text: str
+    source_index: int                # 1-based, matches SourceEntry.index
+    source_url: str
+    source_file: str                 # e.g. "source-1.md"
+    char_offset: int                 # start offset in the normalised source text
+    score: float = 0.0               # relevance score; higher = more relevant
+
+
+@dataclass
+class IndexedSource:
+    """A source prepared for indexing by a RetrievalBackend."""
+    index: int                       # 1-based, matches SourceEntry.index
+    url: str
+    source_file: str                 # e.g. "source-1.md"
+    text: str                        # normalised text to be chunked/embedded
+
+
+@dataclass
+class RetrievalIndex:
+    """Opaque handle returned by RetrievalBackend.index().
+
+    The backend owns the internal representation; callers only pass this
+    token back to retrieve(). The metadata fields are for logging/debugging.
+    """
+    backend_name: str
+    source_count: int
+    total_chars: int
+    _state: object = field(default=None, repr=False)  # backend-specific state
