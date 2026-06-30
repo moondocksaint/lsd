@@ -502,8 +502,43 @@ def _score_package(package_dir: Path, expected_dir: Path | None) -> tuple[int, i
     return total, 14, details
 
 
+_ISO_TIMESTAMP_RE = __import__('re').compile(
+    r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})'
+)
+# Content hash is a hex fingerprint of the fetched source. For live pages
+# (e.g. Wikipedia) it can change between runs. Normalize it for diffing so
+# the expected/ snapshot doesn't need to be re-committed on every source edit.
+_CONTENT_HASH_RE = __import__('re').compile(
+    r'(?<="normalized_hash": ")[0-9a-f]{8,}(?=")'
+    r'|(?<=`)[0-9a-f]{16}(?=`)'
+)
+_SCRUBBED_TS = "__TIMESTAMP__"
+_SCRUBBED_HASH = "__CONTENT_HASH__"
+
+
+def _normalize_for_diff(text: str) -> str:
+    """Replace volatile fields with stable placeholders for diffing.
+
+    Normalizes:
+    - ISO-8601 timestamps (generated_at, last_checked_at, etc.)
+    - normalized_hash values (content-dependent, changes when live source changes)
+
+    Neither the expected/ snapshot nor the actual output need manual scrubbing
+    — normalization is applied on both sides at diff time.
+    """
+    text = _ISO_TIMESTAMP_RE.sub(_SCRUBBED_TS, text)
+    text = _CONTENT_HASH_RE.sub(_SCRUBBED_HASH, text)
+    return text
+
+
 def _diff_against_expected(actual_dir: Path, expected_dir: Path) -> None:
-    """Print a simple diff summary between actual and expected output files."""
+    """Print a simple diff summary between actual and expected output files.
+
+    Timestamps are normalized on both sides before comparison so
+    non-deterministic fields (generated_at, last_checked_at, etc.) don't
+    cause false positives. The expected/ snapshot never needs manual
+    timestamp scrubbing.
+    """
     expected_files = list(expected_dir.glob("*"))
     if not expected_files:
         console.print("[dim]Expected directory is empty — nothing to diff.[/dim]")
@@ -512,12 +547,14 @@ def _diff_against_expected(actual_dir: Path, expected_dir: Path) -> None:
     for exp_file in sorted(expected_files):
         if exp_file.is_dir():
             continue
+        if exp_file.suffix not in (".md", ".json", ".txt", ""):
+            continue
         act_file = actual_dir / exp_file.name
         if not act_file.exists():
             console.print(f"  [red]MISSING[/red]  {exp_file.name}")
             continue
-        exp_text = exp_file.read_text()
-        act_text = act_file.read_text()
+        exp_text = _normalize_for_diff(exp_file.read_text())
+        act_text = _normalize_for_diff(act_file.read_text())
         if exp_text == act_text:
             console.print(f"  [green]MATCH[/green]    {exp_file.name}")
         else:

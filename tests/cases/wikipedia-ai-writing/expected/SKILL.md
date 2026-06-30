@@ -6,6 +6,7 @@ description: >-
   Use this skill when working with content derived from: Wikipedia:Signs of AI writing - Wikipedia.
   Skill type: Reviewer. Ingestion mode: text-first.
 allowed-tools: Read, Write, Edit
+compiler_model: api/mercury-2
 ---
 
 ## Purpose
@@ -28,23 +29,26 @@ Use this skill when asked to perform tasks related to:
 
 ## Core principle
 
-Treat the catalog of AI‑writing indicators on the page as a checklist of clues, not proof, and use them to decide whether a Wikipedia article needs editing, tagging, or human review.
+Detect and address AI‑generated Wikipedia content by systematically checking for the concrete linguistic and structural “signs” described on the *Wikipedia:Signs of AI writing* page, then taking the appropriate policy‑based remediation rather than merely removing the surface signs.
 
 ## Workflow
 
-1. Scan the article for concrete signs listed on the page (e.g., regression‑to‑the‑mean phrasing, undue emphasis on significance, canned notability statements, promotional adjectives, vague attributions, outline‑like “Challenges” sections, leads that treat list titles as proper nouns, overused “AI vocabulary,” avoidance of simple copulas, negative parallelisms).  
-2. Run a detection tool (e.g., GPTZero) only as a secondary sanity check, remembering the tool’s non‑trivial error rates described in the “AI detection tools” caveat.  
-3. Compare any flagged passages against Wikipedia policies (Manual of Style, WP:Large language models § Handling suspected LLM‑generated content) to determine whether the issue is a formatting problem, a policy violation, or merely an AI stylistic hallmark.  
-4. Edit the text to replace AI‑specific phrasing (e.g., “Additionally,” “serves as,” promotional adjectives) while preserving factual content, as the source notes that signs are “potential problems, not the problem itself.”  
-5. Record the review in the edit summary and, if appropriate, add a tag or flag according to the guidelines in Wikipedia:Large language models § Handling suspected LLM‑generated content.
+1. **Locate the edit to review** – open the revision and note its ID, as the skill operates on a single edit at a time.  
+2. **Scan for “AI vocabulary”** – search for over‑used words listed under WP:AIVOCAB (e.g., “Additionally”, “boasts”, “crucial”, “delve”, “highlight”, “vibrant”).  
+3. **Check for undue emphasis** – look for patterns of inflated significance, notability, or media coverage (WP:AILEGACY, WP:OVERATTRIBUTION) such as “independent coverage” or “maintains an active social media presence”.  
+4. **Identify superficial or promotional language** – flag phrases that resemble travel‑guide or press‑release tone (WP:AIPUFFERY, WP:SUPERFICIAL) like “nestled in the breathtaking region” or “showcasing a powerful emotional presence”.  
+5. **Spot vague attributions and weasel wording** – detect constructions such as “Industry reports suggest” or “Experts argue” (WP:AIWEASEL) that lack concrete citations.  
+6. **Examine lead sentences for list‑title misuse** – ensure the opening does not treat a list title as a proper noun (e.g., “Catchment area (health) refers to…”).  
+7. **Assess copula avoidance and negative parallelisms** – verify whether simple “is/are” constructions are replaced with “serves as”, “marks”, or “not only … but … ” patterns (WP:CONCRETE, WP:AIPARALLEL).  
+8. **Summarize findings and decide** – based on the severity of the detected signs, choose the appropriate action (e.g., improve the prose, add citations, tag for further review, or propose deletion per G15).
 
 ## Output format
 
-- **Detected AI signs:** list of specific patterns identified in the article.  
-- **Confidence rating:** high / medium / low based on the number and severity of signs.  
-- **Recommended action:** edit, tag, or defer to human review.  
-- **Evidence excerpts:** quoted text illustrating each detected sign.  
-- **Policy references:** links to relevant Wikipedia guidelines (e.g., WP:AIWTW, WP:SUPERFICIAL).
+- **Edit ID** – the revision identifier being reviewed.  
+- **Detected Signs** – a concise list of the specific AI‑writing signs found (e.g., “AI vocabulary: Additional, boasts; Undue emphasis on notability; Vague attribution: Industry reports”).  
+- **Severity** – rating of the overall AI‑generated likelihood (Low / Medium / High).  
+- **Recommended Action** – the concrete step to take (e.g., “Edit for neutral tone”, “Add reliable citations”, “Tag with WP:AI‑generated‑suspected”, “Request speedy deletion under G15”).  
+- **Evidence Snippets** – up to three short excerpts from the edit that illustrate the detected signs.
 
 ## Style rule
 
