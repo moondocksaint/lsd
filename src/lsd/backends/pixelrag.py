@@ -4,13 +4,30 @@ This is a thin translation wrapper. It maps:
   - LSD's call contract  →  pixelrag's API
   - pixelrag's output    →  LSD's VisualResult
 
+The actual pixelrag API (v0.3.0+):
+  from pixelrag_render import render_url
+  tiles = render_url(url, output_dir=str(out))
+  # Returns a list of tile file paths.
+  # Tiles are at: <output_dir>/<stem>.png.tiles/tile_NNNN.jpg
+  # A tiles.json manifest is also written alongside the tiles.
+
+Install:
+  pip install pixelrag              # core render only
+  pip install 'pixelrag[playwright]'  # full rendering with Playwright/CDP
+
+Rendering notes:
+  - Use tile_height=1568 for Claude vision (images > 1568px long-edge are downscaled
+    and text becomes unreadable)
+  - Use wait_network_idle=True for JS-heavy / SPA pages; without it the page may
+    be captured before client-rendered content appears
+
 When (if) LSD forks and owns the full visual stack:
   1. Create lsd/backends/native_visual.py implementing IngestionBackend.
   2. Update get_visual_backend() in lsd/backends/__init__.py to prefer it.
   3. This file becomes a shim or gets removed.
   4. Nothing outside lsd/backends/ changes.
 
-The fork path is entirely contained here.
+Swap-candidate triggers: see ROADMAP.md § Architectural principles.
 """
 
 from __future__ import annotations
@@ -27,7 +44,7 @@ class PixelRAGBackend(IngestionBackend):
 
     def is_available(self) -> bool:
         try:
-            import pixelrag  # noqa: F401, PLC0415
+            from pixelrag_render import render_url  # noqa: F401, PLC0415
             return True
         except ImportError:
             return False
@@ -38,20 +55,22 @@ class PixelRAGBackend(IngestionBackend):
         Translates pixelrag's output into LSD's VisualResult contract.
         If pixelrag's API changes, only this method needs updating.
         """
-        import pixelrag  # noqa: PLC0415
+        from pixelrag_render import render_url  # noqa: PLC0415
 
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
 
-        # --- pixelrag call ---
-        # pixelrag.render() returns a RenderResult with .screenshot (Path)
-        # and .tiles (list[Path]). Translate into LSD's VisualResult.
-        result = pixelrag.render(url, output_dir=str(out))
+        # render_url returns a list of tile file paths (str or Path).
+        # Tile naming pattern: <out>/<stem>.png.tiles/tile_NNNN.jpg
+        tile_paths = render_url(url, output_dir=str(out))
+
+        tiles = [Path(t) for t in tile_paths]
+        full_screenshot = tiles[0] if tiles else None
 
         return VisualResult(
             url=url,
             rendered_at=datetime.now(timezone.utc).isoformat(),
-            full_screenshot=Path(result.screenshot) if result.screenshot else None,
-            tiles=[Path(t) for t in result.tiles],
+            full_screenshot=full_screenshot,
+            tiles=tiles,
             backend="pixelrag",
         )

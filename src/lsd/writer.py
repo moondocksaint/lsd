@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,7 +21,6 @@ def write_package(ctx: BuildContext) -> Path:
 
     fetch = ctx.ingestion.fetch
     mode = ctx.ingestion.mode
-    fit = ctx.source_fit
     opp = ctx.opportunity_map
 
     normalised = normalise(fetch)
@@ -68,7 +66,7 @@ def _build_metadata(ctx: BuildContext, norm_hash: str, generated_at: str) -> dic
     fit = ctx.source_fit
     opp = ctx.opportunity_map
 
-    visual_artifacts = []
+    visual_artifacts: list[str] = []
     if mode in ("hybrid", "visual-first"):
         visual_artifacts = ["visual/rendered-page.png", "visual/tiles/"]
 

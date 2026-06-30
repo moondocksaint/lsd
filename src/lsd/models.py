@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Literal
 
 
+SourceType = Literal["html", "pdf", "image", "google_doc", "social", "gated", "unsupported"]
+
+
 @dataclass
 class FetchResult:
     """Normalised text artifact from a fetched URL."""
@@ -26,6 +29,7 @@ class FetchResult:
     fetched_at: str                  # ISO 8601
     http_status: int
     word_count: int = 0
+    source_type: SourceType = "html"
 
 
 @dataclass
