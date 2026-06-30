@@ -17,9 +17,15 @@ Tested providers (set LSD_LLM_BASE_URL accordingly):
   Any vLLM server   http://<host>:<port>/v1
 
 No extra install needed — httpx is already in core deps.
+
+Provider quirks:
+  Inception dLLM: only supports temperature + stop sampling params.
+    Set LSD_OMIT_MAX_TOKENS=1 to omit max_tokens from the request.
 """
 
 from __future__ import annotations
+
+import os
 
 import httpx
 
@@ -29,10 +35,7 @@ _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 
 class OpenAICompatBackend(LLMBackend):
-    """LLM backend for any OpenAI /v1/chat/completions compatible API.
-
-    Uses httpx directly — no openai SDK required.
-    """
+    """LLM backend for any OpenAI /v1/chat/completions compatible API."""
 
     def __init__(
         self,
@@ -41,17 +44,19 @@ class OpenAICompatBackend(LLMBackend):
         base_url: str = _DEFAULT_BASE_URL,
         timeout: int = 120,
         extra_headers: dict[str, str] | None = None,
+        omit_max_tokens: bool = False,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
-        # Some providers (e.g. OpenRouter) require extra headers for attribution
         self._extra_headers: dict[str, str] = extra_headers or {}
+        # Some providers (e.g. Inception dLLM) don't support max_tokens.
+        # Set omit_max_tokens=True or LSD_OMIT_MAX_TOKENS=1 to skip it.
+        self._omit_max_tokens = omit_max_tokens or bool(int(os.environ.get("LSD_OMIT_MAX_TOKENS", "0")))
 
     @property
     def model_id(self) -> str:
-        # Derive a friendly provider name from the base URL for logging
         provider = self._base_url.split("//")[-1].split("/")[0].split(".")[0]
         return f"{provider}/{self._model}"
 
@@ -61,14 +66,16 @@ class OpenAICompatBackend(LLMBackend):
             "Content-Type": "application/json",
             **self._extra_headers,
         }
-        payload = {
+        payload: dict = {
             "model": self._model,
-            "max_tokens": max_tokens,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
         }
+        if not self._omit_max_tokens:
+            payload["max_tokens"] = max_tokens
+
         resp = httpx.post(
             f"{self._base_url}/chat/completions",
             headers=headers,
