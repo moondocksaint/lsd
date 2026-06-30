@@ -97,3 +97,46 @@ class BuildContext:
     output_dir: Path
     builder_version: str = "0.1.0"
     generated_at: str = ""          # ISO 8601, set by writer
+
+
+# ---------------------------------------------------------------------------
+# v0.3 — Multi-source types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SourceEntry:
+    """One source in a multi-source build."""
+    url: str
+    fetch_result: FetchResult
+    fit: SourceFit
+    source_type: SourceType          # mirrors FetchResult.source_type
+    normalised: str
+    ingestion_mode: IngestionMode
+    index: int                       # 1-based
+
+
+@dataclass
+class Conflict:
+    """A single detected conflict between sources."""
+    kind: str                        # "contradiction" | "gap" | "overlap"
+    description: str
+    source_indices: list[int]        # which sources (1-based) are involved
+    severity: str                    # "high" | "medium" | "low"
+    suggestion: str                  # how to resolve
+
+
+@dataclass
+class ConflictReport:
+    """Result of cross-source conflict analysis."""
+    conflicts: list[Conflict]
+    summary: str
+    has_blocking_conflicts: bool     # True if any severity == "high"
+
+
+@dataclass
+class MultiSourceBuildContext:
+    """Build context for multi-source builds."""
+    sources: list[SourceEntry]
+    output_dir: Path
+    conflict_report: ConflictReport
+    combined_opportunities: OpportunityMap

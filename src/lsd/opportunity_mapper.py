@@ -82,3 +82,46 @@ def map_opportunities(fit: SourceFit, url: str) -> OpportunityMap:
         recommended_skill_type=recommended_type,
         candidates=candidates,
     )
+
+
+def map_opportunities_multi(sources: list) -> OpportunityMap:
+    """Merge opportunity maps across multiple sources.
+
+    Takes the union of all per-source candidates, deduplicating by skill
+    type. The first high-confidence candidate encountered becomes the
+    primary recommendation.
+
+    Swap-candidate criteria: replace with LLM-based cross-source synthesis
+    when the quality of heuristic merging degrades on multi-source eval
+    cases, or when an LLM call is already being made for the compiler pass.
+    """
+    all_candidates: list[SkillCandidate] = []
+    seen_types: set[str] = set()
+
+    for source in sources:
+        per_source = map_opportunities(source.fit, source.url)
+        for candidate in per_source.candidates:
+            if candidate.type not in seen_types:
+                seen_types.add(candidate.type)
+                all_candidates.append(candidate)
+
+    high_confidence = [c for c in all_candidates if c.confidence == "high" and c.build_timing == "now"]
+
+    if len(high_confidence) >= 2:
+        action = "build_multiple_skills"
+        recommended_type = high_confidence[0].type
+    elif len(high_confidence) == 1:
+        action = "build_one_skill"
+        recommended_type = high_confidence[0].type
+    elif all_candidates:
+        action = "build_one_skill"
+        recommended_type = all_candidates[0].type
+    else:
+        action = "defer"
+        recommended_type = "unknown"
+
+    return OpportunityMap(
+        recommended_action=action,
+        recommended_skill_type=recommended_type,
+        candidates=all_candidates,
+    )

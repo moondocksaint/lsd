@@ -13,7 +13,15 @@ from lsd.backends import get_visual_backend
 from lsd.backends.base import IngestionBackend
 from lsd.classifier import classify
 from lsd.fetcher import fetch
-from lsd.models import BuildContext, FetchResult, IngestionMode, IngestionResult, SourceFit
+from lsd.models import (
+    BuildContext,
+    FetchResult,
+    IngestionMode,
+    IngestionResult,
+    MultiSourceBuildContext,
+    SourceEntry,
+    SourceFit,
+)
 from lsd.opportunity_mapper import map_opportunities
 from lsd.router import route
 from lsd.writer import write_package
@@ -98,3 +106,62 @@ def build(
 
     # 7. Write package
     return write_package(ctx)
+
+
+def build_multi(
+    urls: list[str],
+    output_dir: Path,
+    mode_override: IngestionMode | None = None,
+) -> MultiSourceBuildContext:
+    """Fetch, classify, and analyse multiple sources in parallel.
+
+    Runs up to 5 fetches concurrently, then performs cross-source conflict
+    detection and merges opportunity maps.
+
+    Swap-candidate criteria (architectural principle):
+      - Replace ThreadPoolExecutor with asyncio when the fetcher gains an
+        async interface, or when I/O parallelism needs to exceed 5 workers.
+      - The function signature (urls, output_dir, mode_override) is the
+        stable contract.
+
+    Returns:
+        A MultiSourceBuildContext with per-source entries and a conflict report.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from lsd.conflict_detector import detect_conflicts
+    from lsd.normaliser import normalise
+    from lsd.opportunity_mapper import map_opportunities_multi
+
+    def _process_one(idx_url: tuple[int, str]) -> SourceEntry:
+        idx, url = idx_url
+        routing = prepare(url, mode_override)
+        norm = normalise(routing.fetch)
+        return SourceEntry(
+            url=url,
+            fetch_result=routing.fetch,
+            fit=routing.source_fit,
+            source_type=routing.fetch.source_type,
+            normalised=norm,
+            ingestion_mode=routing.mode,
+            index=idx,
+        )
+
+    entries: list[SourceEntry] = []
+    with ThreadPoolExecutor(max_workers=min(len(urls), 5)) as pool:
+        futures = {pool.submit(_process_one, (i + 1, url)): url for i, url in enumerate(urls)}
+        for future in as_completed(futures):
+            entries.append(future.result())
+
+    # Preserve original URL order
+    entries.sort(key=lambda e: e.index)
+
+    conflict_report = detect_conflicts(entries)
+    combined_opportunities = map_opportunities_multi(entries)
+
+    return MultiSourceBuildContext(
+        sources=entries,
+        output_dir=output_dir,
+        conflict_report=conflict_report,
+        combined_opportunities=combined_opportunities,
+    )

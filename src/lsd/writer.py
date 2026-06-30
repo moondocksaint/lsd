@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from lsd.compiler import compile_skill
-from lsd.models import BuildContext
+from lsd.models import BuildContext, MultiSourceBuildContext
 from lsd.normaliser import content_hash, normalise
 
 
@@ -56,6 +56,118 @@ def write_package(ctx: BuildContext) -> Path:
         visual_dir = out / "visual" / "tiles"
         visual_dir.mkdir(parents=True, exist_ok=True)
         (out / "visual" / ".gitkeep").touch()
+
+    return out
+
+
+def write_multi_package(ctx: MultiSourceBuildContext) -> Path:
+    """Write multi-source build artifacts to ctx.output_dir.
+
+    Produces:
+      source-1.md, source-2.md, ...   per-source normalised content
+      sources-index.md                 table of all sources with metadata
+      conflicts.md                     conflict report
+      skill-opportunities.md           merged cross-source opportunities
+      metadata.json                    v0.3 schema with source_dependencies array
+      index.md                         directory listing
+    """
+    out = ctx.output_dir
+    out.mkdir(parents=True, exist_ok=True)
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    # Per-source files
+    for entry in ctx.sources:
+        path = out / f"source-{entry.index}.md"
+        path.write_text(entry.normalised, encoding="utf-8")
+
+    # sources-index.md
+    lines: list[str] = [
+        "# Sources Index\n\n",
+        f"Built: {generated_at}\n\n",
+        f"Sources: {len(ctx.sources)}\n\n",
+        "| # | URL | Type | Mode | Overall Fit |\n",
+        "|---|-----|------|------|-------------|\n",
+    ]
+    for e in ctx.sources:
+        source_type = e.source_type if isinstance(e.source_type, str) else str(e.source_type)
+        ingestion_mode = e.ingestion_mode if isinstance(e.ingestion_mode, str) else str(e.ingestion_mode)
+        overall_fit = getattr(e.fit, "overall_fit", "—")
+        lines.append(
+            f"| {e.index} | {e.url} | {source_type} | {ingestion_mode} | {overall_fit} |\n"
+        )
+    (out / "sources-index.md").write_text("".join(lines), encoding="utf-8")
+
+    # conflicts.md
+    conflict_lines: list[str] = [
+        "# Conflict Report\n\n",
+        f"{ctx.conflict_report.summary}\n\n",
+    ]
+    if ctx.conflict_report.has_blocking_conflicts:
+        conflict_lines.append(
+            "> **Warning:** High-severity contradictions detected. "
+            "Review before using this skill.\n\n"
+        )
+    if not ctx.conflict_report.conflicts:
+        conflict_lines.append("No conflicts detected.\n")
+    else:
+        for i, c in enumerate(ctx.conflict_report.conflicts, 1):
+            conflict_lines.extend([
+                f"## Conflict {i}: {c.kind.title()} [{c.severity.upper()}]\n\n",
+                f"**Sources involved:** {', '.join(str(s) for s in c.source_indices)}\n\n",
+                f"**Description:** {c.description}\n\n",
+                f"**Suggestion:** {c.suggestion}\n\n",
+            ])
+    (out / "conflicts.md").write_text("".join(conflict_lines), encoding="utf-8")
+
+    # skill-opportunities.md
+    opp = ctx.combined_opportunities
+    (out / "skill-opportunities.md").write_text(_opportunities_md(opp), encoding="utf-8")
+
+    # metadata.json — v0.3 schema
+    meta = {
+        "package": {
+            "version": "0.3.0",
+            "generated_at": generated_at,
+            "builder_skill_version": "0.3.0",
+            "output_mode": "multi_source",
+        },
+        "source_dependencies": [
+            {
+                "index": e.index,
+                "url": e.url,
+                "source_type": e.source_type if isinstance(e.source_type, str) else str(e.source_type),
+                "ingestion_mode": e.ingestion_mode if isinstance(e.ingestion_mode, str) else str(e.ingestion_mode),
+                "content_hash": content_hash(e.normalised),
+                "overall_fit": getattr(e.fit, "overall_fit", "unknown"),
+            }
+            for e in ctx.sources
+        ],
+        "conflict_summary": ctx.conflict_report.summary,
+        "has_blocking_conflicts": ctx.conflict_report.has_blocking_conflicts,
+        "opportunity_summary": {
+            "recommended_action": opp.recommended_action,
+            "recommended_skill_type": opp.recommended_skill_type,
+            "candidate_count": len(opp.candidates),
+        },
+    }
+    (out / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    # index.md
+    index_lines: list[str] = [
+        "# LSD Multi-Source Build\n\n",
+        f"Sources: {len(ctx.sources)}\n\n",
+        "## Files\n\n",
+    ]
+    for e in ctx.sources:
+        index_lines.append(f"- [source-{e.index}.md](source-{e.index}.md) — {e.url}\n")
+    index_lines.extend([
+        "- [sources-index.md](sources-index.md)\n",
+        "- [conflicts.md](conflicts.md)\n",
+        "- [skill-opportunities.md](skill-opportunities.md)\n",
+        "- [metadata.json](metadata.json)\n",
+    ])
+    (out / "index.md").write_text("".join(index_lines), encoding="utf-8")
 
     return out
 
