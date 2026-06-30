@@ -1,45 +1,72 @@
 """Compile a SKILL.md from a BuildContext.
 
-Two modes:
-  - LLM mode (default when ANTHROPIC_API_KEY is set or api_key is passed):
-    calls Claude to fill in Core principle, Workflow, and Output format
-    from the actual source content. Model defaults to claude-haiku-3-5;
-    override with LSD_MODEL env var.
-  - Offline / fallback mode: returns the heuristic skeleton with
-    <!-- TODO --> placeholders. Triggered when no API key is available
-    or if the LLM call fails for any reason.
+Two modes — selected automatically, no flag needed:
 
-The function signature is stable — callers never need to know which mode ran.
+  LLM mode     An LLMBackend is available (configured via env vars or
+               passed explicitly). Fills Core principle, Workflow, and
+               Output format with source-specific content.
+
+  Offline mode No backend available or the LLM call fails. Returns the
+               heuristic skeleton with <!-- TODO --> placeholders so the
+               build always succeeds.
+
+Provider configuration (env vars):
+
+  LSD_LLM_PROVIDER   anthropic (default) | openai-compat
+  ANTHROPIC_API_KEY  Key for Anthropic
+  LSD_LLM_BASE_URL   Base URL for openai-compat (OpenRouter, Inception, Ollama, …)
+  LSD_LLM_API_KEY    Key for openai-compat
+  LSD_MODEL          Model name override (provider-specific)
+
+See lsd/llm/__init__.py for the full provider reference.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import re
 
+from lsd.llm.base import LLMBackend
 from lsd.models import BuildContext
 
 log = logging.getLogger(__name__)
 
 # Maximum source characters sent to the LLM. Wikipedia pages can be 150K+;
-# we truncate to keep the prompt within a reasonable token budget while still
-# giving the model enough signal to write concrete, source-specific content.
+# truncate to keep the prompt within a reasonable token budget while still
+# giving the model enough signal for concrete, source-specific content.
 _MAX_SOURCE_CHARS = 40_000
 
 
-def compile_skill(ctx: BuildContext, api_key: str | None = None) -> str:
+def compile_skill(
+    ctx: BuildContext,
+    llm_backend: LLMBackend | None = None,
+) -> str:
     """Return the SKILL.md content as a string.
 
-    Uses the LLM path if an API key is available; falls back to the
-    heuristic skeleton otherwise.
+    Args:
+        ctx:         The BuildContext from the pipeline.
+        llm_backend: Optional explicit backend. If None, the factory in
+                     lsd.llm resolves from env vars. If no backend is
+                     configured, falls back to the heuristic skeleton.
     """
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if key:
+    backend = llm_backend
+    if backend is None:
         try:
-            return _compile_with_llm(ctx, key)
+            from lsd.llm import get_llm_backend  # noqa: PLC0415
+            backend = get_llm_backend()
         except Exception as exc:  # noqa: BLE001
-            log.warning("LLM compiler failed (%s); falling back to heuristic skeleton.", exc)
+            log.warning("Could not initialise LLM backend (%s); using heuristic fallback.", exc)
+
+    if backend is not None:
+        try:
+            return _compile_with_llm(ctx, backend)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "LLM compiler failed with %s (%s); falling back to heuristic skeleton.",
+                backend.model_id,
+                exc,
+            )
+
     return _compile_heuristic(ctx)
 
 
@@ -47,14 +74,11 @@ def compile_skill(ctx: BuildContext, api_key: str | None = None) -> str:
 # LLM path
 # ---------------------------------------------------------------------------
 
-def _compile_with_llm(ctx: BuildContext, api_key: str) -> str:
-    import anthropic  # noqa: PLC0415
-
+def _compile_with_llm(ctx: BuildContext, backend: LLMBackend) -> str:
     fetch = ctx.ingestion.fetch
     fit = ctx.source_fit
     opp = ctx.opportunity_map
 
-    model = os.environ.get("LSD_MODEL", "claude-haiku-3-5")
     source_excerpt = fetch.text[:_MAX_SOURCE_CHARS]
     if len(fetch.text) > _MAX_SOURCE_CHARS:
         source_excerpt += "\n\n[Source truncated for compilation — full text in source.md]"
@@ -96,18 +120,9 @@ Write exactly three sections in this format (use these exact headings):
 
 Return only the three sections above. No preamble, no commentary."""
 
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=model,
-        max_tokens=1024,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
-    llm_output = message.content[0].text.strip()
-
-    core_principle, workflow, output_format = _parse_llm_sections(llm_output)
-
-    return _render_template(ctx, core_principle, workflow, output_format, llm_model=model)
+    response = backend.complete(system=system, user=user, max_tokens=1024)
+    core_principle, workflow, output_format = _parse_llm_sections(response)
+    return _render_template(ctx, core_principle, workflow, output_format, model_id=backend.model_id)
 
 
 def _parse_llm_sections(text: str) -> tuple[str, str, str]:
@@ -121,7 +136,6 @@ def _parse_llm_sections(text: str) -> tuple[str, str, str]:
         r"|##\s*Output format\s*\n(.*?)(?=##\s|\Z)",
         re.DOTALL | re.IGNORECASE,
     )
-
     core = workflow = output = ""
     for m in section_re.finditer(text):
         if m.group(1) is not None:
@@ -131,9 +145,9 @@ def _parse_llm_sections(text: str) -> tuple[str, str, str]:
         elif m.group(3) is not None:
             output = m.group(3).strip()
 
-    core = core or "<!-- LLM did not return a core principle -->"
-    workflow = workflow or "<!-- LLM did not return a workflow -->"
-    output = output or "<!-- LLM did not return an output format -->"
+    core = core or "<!-- LLM response did not include a core principle -->"
+    workflow = workflow or "<!-- LLM response did not include a workflow -->"
+    output = output or "<!-- LLM response did not include an output format -->"
     return core, workflow, output
 
 
@@ -146,7 +160,7 @@ def _render_template(
     core_principle: str,
     workflow: str,
     output_format: str,
-    llm_model: str | None = None,
+    model_id: str | None = None,
 ) -> str:
     fetch = ctx.ingestion.fetch
     fit = ctx.source_fit
@@ -155,7 +169,7 @@ def _render_template(
 
     skill_type = opp.recommended_skill_type.replace("_", " ").title()
     name = f"{skill_type} — from {fetch.title[:60]}"
-    caveat_block = _caveat_block(mode, llm_model)
+    caveat_block = _caveat_block(mode, model_id)
 
     return f"""---
 name: {name}
@@ -231,7 +245,7 @@ def _compile_heuristic(ctx: BuildContext) -> str:
         "- Evidence or rationale\n"
         "- Recommended action"
     )
-    return _render_template(ctx, core_principle, workflow, output_format, llm_model=None)
+    return _render_template(ctx, core_principle, workflow, output_format, model_id=None)
 
 
 # ---------------------------------------------------------------------------
@@ -250,12 +264,15 @@ def _usage_hints(fit, skill_type: str) -> str:
     return "\n".join(hints) if hints else "- General tasks related to the source domain"
 
 
-def _caveat_block(mode: str, llm_model: str | None) -> str:
+def _caveat_block(mode: str, model_id: str | None) -> str:
     base = "This skill was auto-generated by LSD and should be reviewed before use."
     llm_note = (
-        f" Core sections were compiled by {llm_model}."
-        if llm_model
-        else " Core sections contain placeholder text — run with ANTHROPIC_API_KEY set for full compilation."
+        f" Core sections were compiled by {model_id}."
+        if model_id
+        else (
+            " Core sections contain placeholder text — configure an LLM provider "
+            "via LSD_LLM_PROVIDER + API key env vars for full compilation."
+        )
     )
     suffix = base + llm_note
     if mode == "hybrid":
