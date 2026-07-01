@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lsd"
-version = "0.2.0"
+version = "0.5.0"
 description = "Link-to-Skill Designer — turn any webpage into a reusable Claude skill package"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,6 +37,7 @@ dev = [
     "ruff",
     "mypy",
     "anthropic>=0.100",               # needed for dev/test of the Anthropic backend
+    "skills-ref>=0.1",                # agentskills spec validator
 ]
 
 [project.scripts]

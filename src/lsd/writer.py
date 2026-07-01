@@ -6,7 +6,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lsd.compiler import compile_skill
+from lsd import __version__ as lsd_version
+from lsd.compiler import compile_skill, compile_skill_multi
 from lsd.models import BuildContext, MultiSourceBuildContext
 from lsd.normaliser import content_hash, normalise
 
@@ -67,7 +68,13 @@ def write_package(ctx: BuildContext) -> Path:
 
 
 def write_multi_package(ctx: MultiSourceBuildContext) -> Path:
-    """Write multi-source build artifacts to ctx.output_dir."""
+    """Write multi-source build artifacts to ctx.output_dir.
+
+    Compiles SKILL.md (with compiler_model) inside this function so the
+    model id is available for metadata.json and README.md. Retrieval
+    backend is taken from ctx._retrieval_backend / ctx._retrieval_index
+    if available (set by pipeline.build_multi).
+    """
     out = ctx.output_dir
     out.mkdir(parents=True, exist_ok=True)
 
@@ -121,35 +128,23 @@ def write_multi_package(ctx: MultiSourceBuildContext) -> Path:
     opp = ctx.combined_opportunities
     (out / "skill-opportunities.md").write_text(_opportunities_md(opp), encoding="utf-8")
 
-    # metadata.json — v0.3 schema
-    meta = {
-        "package": {
-            "version": "0.3.0",
-            "generated_at": generated_at,
-            "builder_skill_version": "0.3.0",
-            "output_mode": "multi_source",
-            "compiler_model": None,  # populated post-compilation when compile_skill_multi is called
-        },
-        "source_dependencies": [
-            {
-                "index": e.index,
-                "url": e.url,
-                "source_type": e.source_type if isinstance(e.source_type, str) else str(e.source_type),
-                "ingestion_mode": e.ingestion_mode if isinstance(e.ingestion_mode, str) else str(e.ingestion_mode),
-                "content_hash": content_hash(e.normalised),
-                "overall_fit": getattr(e.fit, "overall_fit", "unknown"),
-            }
-            for e in ctx.sources
-        ],
-        "conflict_summary": ctx.conflict_report.summary,
-        "has_blocking_conflicts": ctx.conflict_report.has_blocking_conflicts,
-        "opportunity_summary": {
-            "recommended_action": opp.recommended_action,
-            "recommended_skill_type": opp.recommended_skill_type,
-            "candidate_count": len(opp.candidates),
-        },
-    }
+    # Compile SKILL.md — retrieval backend may be pre-attached by build_multi()
+    ret_backend = getattr(ctx, "_retrieval_backend", None)
+    ret_index = getattr(ctx, "_retrieval_index", None)
+    skill_content, compiler_model = compile_skill_multi(
+        ctx,
+        retrieval_backend=ret_backend if ret_index is not None else None,
+    )
+    (out / "SKILL.md").write_text(skill_content, encoding="utf-8")
+
+    # metadata.json — v0.5 schema, compiler_model now populated
+    meta = _build_metadata_multi(ctx, generated_at, compiler_model)
     (out / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    # README.md — agent entry point for versioning (multi-source variant)
+    (out / "README.md").write_text(
+        _readme_multi(ctx, generated_at, compiler_model), encoding="utf-8"
+    )
 
     # index.md
     index_lines: list[str] = [
@@ -164,26 +159,20 @@ def write_multi_package(ctx: MultiSourceBuildContext) -> Path:
         "- [conflicts.md](conflicts.md)\n",
         "- [skill-opportunities.md](skill-opportunities.md)\n",
         "- [metadata.json](metadata.json)\n",
+        "- [README.md](README.md)\n",
+        "- [SKILL.md](SKILL.md)\n",
     ])
     (out / "index.md").write_text("".join(index_lines), encoding="utf-8")
 
     return out
 
 
+# ---------------------------------------------------------------------------
+# README generators
+# ---------------------------------------------------------------------------
+
 def _readme(ctx: BuildContext, norm_hash: str, generated_at: str, compiler_model: str | None) -> str:
-    """Generate README.md — the agent's entry point for this skill package.
-
-    This is the file an agent (or human) reads first to understand the skill,
-    its source provenance, and how to check for updates. It is the canonical
-    place to look for version and update information.
-
-    Design follows Anthropic skill-creator anatomy:
-      - Frontmatter-compatible header (name, version, source)
-      - When to use (trigger guidance)
-      - Package structure (file map)
-      - Version & update workflow (where agents look for drift)
-      - Governance (promotion policy)
-    """
+    """Generate README.md — the agent's entry point for this skill package."""
     fetch = ctx.ingestion.fetch
     fit = ctx.source_fit
     opp = ctx.opportunity_map
@@ -196,7 +185,6 @@ def _readme(ctx: BuildContext, norm_hash: str, generated_at: str, compiler_model
         else "Compiled with heuristic fallback (no LLM configured)."
     )
 
-    # Candidates table
     candidate_rows = "\n".join(
         f"| {c.type} | {c.confidence} | {c.build_timing} | {c.why_fit} |"
         for c in opp.candidates
@@ -204,7 +192,7 @@ def _readme(ctx: BuildContext, norm_hash: str, generated_at: str, compiler_model
 
     return f"""# {skill_type} — LSD Skill Package
 
-> Auto-generated by [LSD](https://github.com/moondocksaint/lsd).
+> Auto-generated by [LSD](https://github.com/moondocksaint/lsd) v{lsd_version}.
 > Review and refine before promoting to production use.
 
 ## When to use
@@ -212,16 +200,13 @@ def _readme(ctx: BuildContext, norm_hash: str, generated_at: str, compiler_model
 Use this skill for **{skill_type.lower()}** tasks drawing on:
 - Source: [{fetch.title}]({fetch.canonical_url})
 
-Trigger phrases: "{skill_type.lower()}", "review for AI writing", "check this article",
-or any task that requires applying the checklist from the source URL above.
-
 ## Package structure
 
 ```
 <package-dir>/
 ├── README.md               ← you are here; start here for versioning
 ├── SKILL.md                ← load this into your agent
-├── source.md               ← normalised source text (the grounding artifact)
+├── source.md               ← normalised source text
 ├── source-policy.md        ← update policy, fallback chain
 ├── skill-opportunities.md  ← other skill types this source supports
 ├── extraction-report.md    ← classification scores and routing rationale
@@ -231,23 +216,18 @@ or any task that requires applying the checklist from the source URL above.
 
 ## Version & update workflow
 
-**When the source URL changes**, agents and CI should:
+Run `lsd check <package-dir>` to detect source drift. Change states:
+- **Unchanged** — hash identical, no action needed
+- **Minor** — content changed, structure intact; offer rebuild
+- **Substantial** — major rewrite; warn user, do not auto-overwrite
+- **Gone** — 404/unreachable; preserve existing package, use fallback chain
+- **Redirected** — URL moved; offer to update canonical URL
 
-1. Re-fetch the source and compare `metadata.json → source_dependency.normalized_hash`
-   against the value stored in this package's `metadata.json`.
-2. Classify the change:
-   - **Trivial** (hash unchanged or whitespace-only): log, no action.
-   - **Moderate** (content changed, structure intact): create an update candidate,
-     run `lsd eval` to score it, promote on approval.
-   - **Material** (new sections, major rewrites): bump `package.version`, draft a
-     new `SKILL.md`, update `CHANGELOG.md`, require explicit human review.
-3. Never auto-promote. `source-policy.md` documents the full fallback chain.
-
-**Machine-readable provenance** lives in `metadata.json`:
-- `source_dependency.normalized_hash` — fingerprint of the normalised source text
+Machine-readable provenance in `metadata.json`:
+- `source_dependency.normalized_hash` — fingerprint of the normalised source
 - `source_dependency.last_checked_at` — timestamp of last fetch
 - `package.compiler_model` — which LLM compiled the skill sections
-- `package.generated_at` — when this package was built
+- `package.lsd_version` — LSD version that built this package
 
 ## Source provenance
 
@@ -262,6 +242,7 @@ or any task that requires applying the checklist from the source URL above.
 | Content hash | `{norm_hash}` |
 | Built at | `{generated_at}` |
 | Compiler | `{compiler_model or "heuristic (no LLM)"}` |
+| LSD version | `{lsd_version}` |
 
 ## Skill opportunities
 
@@ -273,14 +254,108 @@ or any task that requires applying the checklist from the source URL above.
 
 - Promotion policy: **manual approval required**
 - Auto-update threshold: **never**
-- Change classification: trivial / moderate / material
+- Change classification: unchanged / minor / substantial / gone / redirected
 - Review `source-policy.md` before promoting any update.
 
 ---
 
-*{compiler_note} Generated by LSD v{ctx.builder_version}.*
+*{compiler_note} Generated by LSD v{lsd_version}.*
 """
 
+
+def _readme_multi(
+    ctx: MultiSourceBuildContext,
+    generated_at: str,
+    compiler_model: str | None,
+) -> str:
+    """Generate README.md for a multi-source skill package."""
+    opp = ctx.combined_opportunities
+    skill_type = opp.recommended_skill_type.replace("_", " ").title()
+    compiler_note = (
+        f"Compiled by `{compiler_model}`."
+        if compiler_model
+        else "Compiled with heuristic fallback (no LLM configured)."
+    )
+
+    source_rows = "\n".join(
+        f"| {e.index} | [{e.url}]({e.url}) | "
+        f"`{content_hash(e.normalised)}` | "
+        f"`{getattr(e.fit, 'overall_fit', '—')}` |"
+        for e in ctx.sources
+    )
+
+    conflict_note = ""
+    if ctx.conflict_report.has_blocking_conflicts:
+        conflict_note = (
+            "\n> **Warning:** Blocking conflicts detected across sources. "
+            "See `conflicts.md` before using this skill.\n"
+        )
+    elif ctx.conflict_report.conflicts:
+        conflict_note = f"\n> Note: {ctx.conflict_report.summary} See `conflicts.md`.\n"
+
+    return f"""# {skill_type} (Multi-Source) — LSD Skill Package
+
+> Auto-generated by [LSD](https://github.com/moondocksaint/lsd) v{lsd_version}
+> from {len(ctx.sources)} sources.
+> Review and refine before promoting to production use.
+{conflict_note}
+## When to use
+
+Use this skill for **{skill_type.lower()}** tasks that draw on multiple sources.
+Each claim in `SKILL.md` is cited with [Source N] for traceability.
+
+## Package structure
+
+```
+<package-dir>/
+├── README.md               ← you are here; start here for versioning
+├── SKILL.md                ← load this into your agent (multi-source compiled)
+├── index.md                ← package overview and file map
+├── sources-index.md        ← fetch status and fit scores per source
+├── source-1.md … source-N.md  ← normalised per-source text
+├── conflicts.md            ← cross-source gaps, contradictions, overlaps
+├── skill-opportunities.md  ← skill types detected across all sources
+└── metadata.json           ← machine-readable provenance
+```
+
+## Version & update workflow
+
+Run `lsd check <package-dir>` to detect drift in any source. Drift in
+any one source triggers a check report for all sources. Change states:
+- **Unchanged** — all hashes identical, no action needed
+- **Minor** — one or more sources changed, structure intact
+- **Substantial** — major rewrite in any source; warn, do not auto-overwrite
+- **Gone** — a source URL is 404/unreachable; preserve package, use fallback
+- **Redirected** — a source URL moved; offer to update canonical URL
+
+## Source provenance
+
+| # | URL | Content Hash | Overall Fit |
+|---|-----|-------------|-------------|
+{source_rows}
+
+| Field | Value |
+|-------|-------|
+| Built at | `{generated_at}` |
+| Compiler | `{compiler_model or "heuristic (no LLM)"}` |
+| LSD version | `{lsd_version}` |
+| Conflicts | {ctx.conflict_report.summary} |
+
+## Governance
+
+- Promotion policy: **manual approval required**
+- Auto-update threshold: **never**
+- Resolve all blocking conflicts in `conflicts.md` before promoting.
+
+---
+
+*{compiler_note} Generated by LSD v{lsd_version}.*
+"""
+
+
+# ---------------------------------------------------------------------------
+# Metadata builders
+# ---------------------------------------------------------------------------
 
 def _build_metadata(
     ctx: BuildContext,
@@ -302,8 +377,8 @@ def _build_metadata(
             "name": opp.recommended_skill_type.replace("_", " ").title(),
             "version": "0.1.0",
             "generated_at": generated_at,
-            "builder_skill_version": ctx.builder_version,
-            "compiler_model": compiler_model,   # which LLM compiled the skill sections
+            "lsd_version": lsd_version,
+            "compiler_model": compiler_model,
             "output_mode": "full_package",
         },
         "source_dependency": {
@@ -358,16 +433,8 @@ def _build_metadata(
             "criticality": "medium",
             "review_required_for_promotion": True,
             "auto_update_threshold": "never",
-            "change_classification_policy": "trivial_moderate_material",
+            "change_classification_policy": "unchanged/minor/substantial/gone/redirected",
             "policy_notes": "Review all source changes before promoting an updated skill.",
-        },
-        "context_used": {
-            "project_memory": False,
-            "project_files": False,
-            "project_instructions": False,
-            "related_skills": False,
-            "user_preferences": False,
-            "context_notes": "Generated by lsd CLI.",
         },
         "artifacts": {
             "readme_file": "README.md",
@@ -381,6 +448,65 @@ def _build_metadata(
         },
     }
 
+
+def _build_metadata_multi(
+    ctx: MultiSourceBuildContext,
+    generated_at: str,
+    compiler_model: str | None,
+) -> dict:
+    """Build metadata.json for a multi-source package. compiler_model is now populated."""
+    opp = ctx.combined_opportunities
+    return {
+        "package": {
+            "version": "0.3.0",
+            "generated_at": generated_at,
+            "lsd_version": lsd_version,
+            "output_mode": "multi_source",
+            "compiler_model": compiler_model,   # populated by compile_skill_multi()
+        },
+        "source_dependencies": [
+            {
+                "index": e.index,
+                "url": e.url,
+                "source_type": e.source_type if isinstance(e.source_type, str) else str(e.source_type),
+                "ingestion_mode": e.ingestion_mode if isinstance(e.ingestion_mode, str) else str(e.ingestion_mode),
+                "normalized_hash": content_hash(e.normalised),
+                "last_checked_at": generated_at,
+                "overall_fit": getattr(e.fit, "overall_fit", "unknown"),
+                "fallback_order": [
+                    "local_copy", "wayback_snapshot",
+                    "secondary_archive", "previous_version",
+                ],
+            }
+            for e in ctx.sources
+        ],
+        "conflict_summary": ctx.conflict_report.summary,
+        "has_blocking_conflicts": ctx.conflict_report.has_blocking_conflicts,
+        "opportunity_summary": {
+            "recommended_action": opp.recommended_action,
+            "recommended_skill_type": opp.recommended_skill_type,
+            "candidate_count": len(opp.candidates),
+        },
+        "governance": {
+            "review_required_for_promotion": True,
+            "auto_update_threshold": "never",
+            "change_classification_policy": "unchanged/minor/substantial/gone/redirected",
+        },
+        "artifacts": {
+            "readme_file": "README.md",
+            "skill_file": "SKILL.md",
+            "index_file": "index.md",
+            "sources_index_file": "sources-index.md",
+            "conflicts_file": "conflicts.md",
+            "opportunity_map_file": "skill-opportunities.md",
+            "metadata_file": "metadata.json",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 def _text_confidence(fit) -> str:
     if fit.rule_density == "high" and fit.example_density == "high":
@@ -412,15 +538,16 @@ def _source_policy(url: str, mode: str) -> str:
 - Promotion policy: manual approval
 
 ## Refresh workflow
-1. Fetch and normalise the current page.
-2. Compare normalised hash against stored value.
-3. Classify change: trivial / moderate / material.
-4. Trivial: log only. Moderate: prepare update candidate. Material: new source version + skill draft.
+1. Run `lsd check <package-dir>` to compare normalized hash.
+2. Classify change: unchanged / minor / substantial / gone / redirected.
+3. Unchanged: no action. Minor: prepare update candidate. Substantial: new
+   source version + skill draft, require explicit user decision.
+4. Gone: do not overwrite. Use fallback chain below.
 5. Never promote without review.
 
 ## Fallback order
-1. Local source artifact
-2. Wayback snapshot
+1. Local source artifact (source.md)
+2. Wayback Machine snapshot
 3. Secondary archive
 4. Previous approved version
 """
@@ -485,4 +612,5 @@ Ingestion mode: {mode}
 ## Maintenance note
 
 Review source changes before promoting any skill update.
+Run `lsd check <package-dir>` to detect drift.
 """

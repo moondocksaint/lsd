@@ -19,6 +19,14 @@ Provider configuration (env vars):
   LSD_MODEL          Model name override (provider-specific)
 
 See lsd/llm/__init__.py for the full provider reference.
+
+Agentskills spec compliance (https://github.com/agentskills/agentskills):
+  - name: lowercase alphanumeric + hyphens only, max 64 chars
+  - ALLOWED_FIELDS in frontmatter: name, description, license, allowed-tools,
+    metadata, compatibility
+  - LSD-specific fields (lsd_version, compiler_model, source_url,
+    generated_at) live inside the metadata: map, never as top-level keys
+  - allowed-tools: space-separated tool-name patterns (no quotes, no commas)
 """
 
 from __future__ import annotations
@@ -32,15 +40,15 @@ from lsd.models import BuildContext, MultiSourceBuildContext
 log = logging.getLogger(__name__)
 
 # Maximum source characters sent to the LLM for single-source builds.
-# Wikipedia pages can be 150K+; truncate to keep the prompt within a
-# reasonable token budget while still giving the model enough signal.
 _MAX_SOURCE_CHARS = 40_000
 
 # Maximum retrieved context chars for multi-source compilation.
-# Each passage is ~1200 chars; at k=10 that's ~12K chars of grounding
-# context, leaving headroom for the prompt and response.
 _MAX_RETRIEVED_CHARS = 15_000
 
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def compile_skill(
     ctx: BuildContext,
@@ -49,12 +57,6 @@ def compile_skill(
     """Return (SKILL.md content, compiler_model_id).
 
     compiler_model_id is None when the heuristic fallback is used.
-
-    Args:
-        ctx:         The BuildContext from the pipeline.
-        llm_backend: Optional explicit backend. If None, the factory in
-                     lsd.llm resolves from env vars. If no backend is
-                     configured, falls back to the heuristic skeleton.
     """
     backend = llm_backend
     if backend is None:
@@ -82,20 +84,17 @@ def compile_skill_multi(
     ctx: MultiSourceBuildContext,
     llm_backend: LLMBackend | None = None,
     retrieval_backend=None,
-) -> str:
+) -> tuple[str, str | None]:
     """Compile a SKILL.md from a multi-source BuildContext.
 
-    Uses the retrieval backend to ground compilation in the most relevant
-    passages across all sources, preserving provenance in the output.
+    Returns (SKILL.md content, compiler_model_id) — same tuple contract as
+    compile_skill() so callers can always write compiler_model to metadata.json.
+    compiler_model_id is None when the heuristic fallback is used.
 
-    Args:
-        ctx:               The MultiSourceBuildContext from build_multi().
-        llm_backend:       Optional explicit LLM backend.
-        retrieval_backend: Optional explicit RetrievalBackend. If None,
-                           uses the default from retrieval/__init__.py.
-
-    Returns:
-        SKILL.md content as a string.
+    Swap-candidate criteria for the retrieval backend:
+      Replace NaiveRetrievalBackend when combined token estimate exceeds
+      50K tokens and rubric score falls below 12/14, or when a
+      NotebookLM-quality RAG API becomes available via simple HTTP call.
     """
     from lsd.models import IndexedSource
     from lsd.retrieval import get_retrieval_backend
@@ -128,18 +127,19 @@ def compile_skill_multi(
         ret_index = ret_backend.index(indexed)
     except Exception as exc:  # noqa: BLE001
         log.warning("Retrieval indexing failed (%s); falling back to heuristic.", exc)
-        return _compile_heuristic_multi(ctx)
+        return _compile_heuristic_multi(ctx), None
 
     if backend is not None:
         try:
-            return _compile_multi_with_llm(ctx, backend, ret_backend, ret_index)
+            content = _compile_multi_with_llm(ctx, backend, ret_backend, ret_index)
+            return content, backend.model_id
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "LLM multi-source compiler failed (%s); falling back to heuristic.",
                 exc,
             )
 
-    return _compile_heuristic_multi(ctx)
+    return _compile_heuristic_multi(ctx), None
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +210,6 @@ def _compile_multi_with_llm(
     opp = ctx.combined_opportunities
     skill_type = opp.recommended_skill_type.replace("_", " ")
 
-    # Retrieve relevant passages for each of the three compiled sections
     queries = [
         f"core principle and central idea for {skill_type}",
         f"step-by-step workflow and procedures for {skill_type}",
@@ -226,7 +225,6 @@ def _compile_multi_with_llm(
                 seen_offsets.add(key)
                 all_passages.append(p)
 
-    # Build grounded context block with provenance markers
     context_parts: list[str] = []
     total_chars = 0
     for p in all_passages:
@@ -239,7 +237,6 @@ def _compile_multi_with_llm(
 
     grounded_context = "\n\n---\n\n".join(context_parts)
 
-    # Source summary for prompt
     source_lines = "\n".join(
         f"  Source {e.index}: {e.url}" for e in ctx.sources
     )
@@ -293,8 +290,22 @@ Return only the three sections above. No preamble, no commentary."""
 
 
 # ---------------------------------------------------------------------------
-# Template renderers
+# Template renderers — agentskills spec compliant
 # ---------------------------------------------------------------------------
+
+def _slugify_name(text: str, max_len: int = 60) -> str:
+    """Convert free-form text to a valid agentskills skill name.
+
+    Rules: lowercase, alphanumeric + hyphens only, no consecutive hyphens,
+    no leading/trailing hyphens, max max_len chars.
+    """
+    s = text.lower()
+    s = re.sub(r"[^\w\s-]", "", s)          # strip special chars (keep word, space, hyphen)
+    s = re.sub(r"[\s_]+", "-", s)           # spaces/underscores → hyphens
+    s = re.sub(r"-{2,}", "-", s)            # collapse consecutive hyphens
+    s = s.strip("-")                         # trim leading/trailing hyphens
+    return s[:max_len].rstrip("-")           # truncate without splitting mid-hyphen
+
 
 def _render_template(
     ctx: BuildContext,
@@ -303,24 +314,44 @@ def _render_template(
     output_format: str,
     model_id: str | None = None,
 ) -> str:
+    """Render a spec-compliant single-source SKILL.md.
+
+    Agentskills ALLOWED_FIELDS: name, description, license, allowed-tools,
+    metadata, compatibility. All LSD-specific fields go in metadata:.
+    """
+    from lsd import __version__ as lsd_version  # noqa: PLC0415
+
     fetch = ctx.ingestion.fetch
     fit = ctx.source_fit
     opp = ctx.opportunity_map
     mode = ctx.ingestion.mode
 
     skill_type = opp.recommended_skill_type.replace("_", " ").title()
-    name = f"{skill_type} — from {fetch.title[:60]}"
+    # Derive name from skill_type + source title slug; keep it readable
+    raw_name = f"{opp.recommended_skill_type}-{_slugify_name(fetch.title)}"
+    name = _slugify_name(raw_name)
+
     caveat_block = _caveat_block(mode, model_id)
-    compiler_model_field = f"\ncompiler_model: {model_id}" if model_id else ""
+    # metadata: map — all LSD-specific provenance fields
+    metadata_block = (
+        f"  lsd_version: \"{lsd_version}\"\n"
+        f"  compiler_model: \"{model_id or 'heuristic'}\"\n"
+        f"  source_url: \"{fetch.canonical_url}\"\n"
+        f"  generated_at: \"{ctx.generated_at if hasattr(ctx, 'generated_at') else ''}\"\n"
+        f"  skill_type: \"{opp.recommended_skill_type}\"\n"
+        f"  ingestion_mode: \"{mode}\""
+    )
 
     return f"""---
 name: {name}
-version: 0.1.0
-summary: Auto-generated by LSD from {fetch.canonical_url}
 description: >-
   Use this skill when working with content derived from: {fetch.title}.
-  Skill type: {skill_type}. Ingestion mode: {mode}.
-allowed-tools: Read, Write, Edit{compiler_model_field}
+  Skill type: {skill_type}. Trigger phrases: {skill_type.lower()},
+  review with {opp.recommended_skill_type.replace('_', ' ')}, apply {name}.
+license: Apache-2.0
+allowed-tools: Read Write Edit
+metadata:
+{metadata_block}
 ---
 
 ## Purpose
@@ -374,8 +405,18 @@ def _render_template_multi(
     output_format: str,
     model_id: str | None = None,
 ) -> str:
+    """Render a spec-compliant multi-source SKILL.md.
+
+    Agentskills ALLOWED_FIELDS: name, description, license, allowed-tools,
+    metadata, compatibility. All LSD-specific fields go in metadata:.
+    """
+    from lsd import __version__ as lsd_version  # noqa: PLC0415
+
     opp = ctx.combined_opportunities
     skill_type = opp.recommended_skill_type.replace("_", " ").title()
+    # Name for multi-source: skill_type slug + "-multi"
+    name = _slugify_name(f"{opp.recommended_skill_type}-multi")
+
     source_list = "\n".join(
         f"- Source {e.index}: {e.url}" for e in ctx.sources
     )
@@ -392,14 +433,27 @@ def _render_template_multi(
         )
     )
 
+    source_urls = " ".join(e.url for e in ctx.sources)
+    metadata_block = (
+        f"  lsd_version: \"{lsd_version}\"\n"
+        f"  compiler_model: \"{model_id or 'heuristic'}\"\n"
+        f"  source_count: {len(ctx.sources)}\n"
+        f"  source_urls: \"{source_urls[:200]}\"\n"
+        f"  skill_type: \"{opp.recommended_skill_type}\""
+    )
+
     return f"""---
-name: {skill_type} — multi-source
-version: 0.3.0
-summary: Auto-generated by LSD from {len(ctx.sources)} sources
+name: {name}
 description: >-
-  Multi-source skill compiled from {len(ctx.sources)} URLs.
-  Skill type: {skill_type}.
-allowed-tools: Read, Write, Edit
+  Multi-source skill for {skill_type.lower()} tasks, compiled from
+  {len(ctx.sources)} sources. Use when performing {skill_type.lower()}
+  tasks that draw on multiple reference documents. Trigger phrases:
+  {skill_type.lower()}, multi-source {opp.recommended_skill_type.replace('_', ' ')},
+  apply {name}.
+license: Apache-2.0
+allowed-tools: Read Write Edit
+metadata:
+{metadata_block}
 ---
 
 ## Purpose
@@ -461,7 +515,7 @@ def _compile_heuristic(ctx: BuildContext) -> str:
         "- Evidence or rationale\n"
         "- Recommended action"
     )
-    return _render_template(ctx, core_principle, workflow, output_format, model_id=None), None
+    return _render_template(ctx, core_principle, workflow, output_format, model_id=None)
 
 
 def _compile_heuristic_multi(ctx: MultiSourceBuildContext) -> str:
