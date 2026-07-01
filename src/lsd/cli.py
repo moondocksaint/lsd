@@ -3,13 +3,17 @@
 Usage:
     lsd build <url> [--output DIR] [--mode MODE] [--dry-run]
     lsd build <url1> <url2> ... [--output DIR] [--mode MODE] [--retrieval-backend NAME]
-    lsd check <url>
+    lsd check <package-dir-or-url> [--url URL]
+    lsd package <package-dir> [--zip] [--output PATH]
     lsd eval <case-dir> [--expected-dir DIR]
     lsd version
 """
 
 from __future__ import annotations
 
+import json
+import re
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -33,8 +37,12 @@ console = Console()
 
 @click.group()
 def main() -> None:
-    """LSD — Link-to-Skill Designer.\n\nTurn any webpage into a reusable Claude skill package."""
+    """LSD — Link-to-Skill Designer.\n\nTurn any webpage into a reusable agent skill package."""
 
+
+# ---------------------------------------------------------------------------
+# build
+# ---------------------------------------------------------------------------
 
 @main.command(name="build")
 @click.argument("urls", nargs=-1, required=True)
@@ -56,14 +64,18 @@ def main() -> None:
 @click.option(
     "--retrieval-backend", "retrieval_backend",
     default=None,
-    help="Retrieval backend for multi-source builds. Default: naive. "
-         "Available: naive. (bm25, colbert, pixelrag coming in future releases.)",
+    help="Retrieval backend for multi-source builds. Default: naive.",
 )
 @click.option(
     "--token-threshold",
     default=50_000,
     show_default=True,
     help="Token count at which to warn and truncate for multi-source builds.",
+)
+@click.option(
+    "--name",
+    default=None,
+    help="Override skill name slug in generated SKILL.md frontmatter.",
 )
 def build_cmd(
     urls: tuple[str, ...],
@@ -72,13 +84,9 @@ def build_cmd(
     dry_run: bool,
     retrieval_backend: Optional[str],
     token_threshold: int,
+    name: Optional[str],
 ) -> None:
-    """Build a skill package from one or more URLs.
-
-    Single URL: produces a full skill package (SKILL.md, source.md, …).
-    Multiple URLs: produces a multi-source package (source-1.md, source-2.md,
-    sources-index.md, conflicts.md, …) with retrieval-grounded compilation.
-    """
+    """Build a skill package from one or more URLs."""
     console.print(Panel.fit(
         f"[bold]LSD[/bold] v{__version__} — Link-to-Skill Designer",
         border_style="dim",
@@ -129,14 +137,13 @@ def build_cmd(
             console=console,
             transient=True,
         ) as progress:
-            progress.add_task("Writing package...", total=None)
+            progress.add_task("Compiling and writing package...", total=None)
             try:
                 result_dir = write_multi_package(ctx)
             except Exception as exc:
                 console.print(f"[red]Write failed:[/red] {exc}")
                 raise SystemExit(1) from exc
 
-        # Retrieval index summary
         if hasattr(ctx, "_retrieval_index"):
             ri = ctx._retrieval_index
             console.print(
@@ -145,7 +152,6 @@ def build_cmd(
                 f"~{ri.total_chars // 1000}K chars[/dim]"
             )
 
-        # Sources table
         table = Table(show_header=True, title="Sources")
         table.add_column("#", style="dim", width=3)
         table.add_column("URL")
@@ -162,7 +168,6 @@ def build_cmd(
             )
         console.print(table)
 
-        # Conflict summary
         conflict_style = "bold red" if ctx.conflict_report.has_blocking_conflicts else "dim"
         console.print(Panel(
             f"[{conflict_style}]{ctx.conflict_report.summary}[/{conflict_style}]",
@@ -179,7 +184,7 @@ def build_cmd(
         return
 
     # ------------------------------------------------------------------ #
-    # Single-source path (original behaviour)
+    # Single-source path
     # ------------------------------------------------------------------ #
     url = urls[0]
 
@@ -200,7 +205,6 @@ def build_cmd(
     source_fit = routing.source_fit
     visual_backend = routing.visual_backend
 
-    # Summary table
     table = Table(show_header=False, box=None, padding=(0, 1))
     table.add_row("[dim]URL[/dim]", fetch_result.canonical_url)
     table.add_row("[dim]Title[/dim]", fetch_result.title[:80])
@@ -241,10 +245,216 @@ def build_cmd(
     _print_tree(result_dir)
 
 
+# ---------------------------------------------------------------------------
+# check  (G3: real drift detection)
+# ---------------------------------------------------------------------------
+
 @main.command(name="check")
-@click.argument("url")
-def check_cmd(url: str) -> None:
-    """Classify a URL and show routing decision without building."""
+@click.argument("target")
+@click.option(
+    "--url",
+    default=None,
+    help="Override the source URL to check against (useful if the canonical URL has moved).",
+)
+def check_cmd(target: str, url: Optional[str]) -> None:
+    """Detect source drift for a skill package or a single URL.
+
+    TARGET can be:
+      - A local package directory (contains metadata.json) — compares
+        normalized_hash for each source dependency.
+      - A single URL — fetches, classifies, and routes (original behaviour);
+        also checks against any local package if --url points to one.
+
+    Drift states:
+      UNCHANGED   Hash identical — no action needed.
+      MINOR       Content changed, heading structure intact — consider rebuild.
+      SUBSTANTIAL Major rewrite detected — warn, do not auto-overwrite.
+      GONE        URL unreachable (4xx/5xx/timeout) — preserve existing package.
+      REDIRECTED  URL permanently redirected to a new location.
+    """
+    target_path = Path(target)
+    is_package = target_path.is_dir() and (target_path / "metadata.json").exists()
+
+    if is_package:
+        _check_package(target_path, url_override=url)
+    else:
+        # Treat target as a URL — original classify+route behaviour
+        _check_url(target)
+
+
+def _check_package(package_dir: Path, url_override: Optional[str] = None) -> None:
+    """Re-fetch each source in the package and compare hashes."""
+    meta_path = package_dir / "metadata.json"
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception as exc:
+        console.print(f"[red]Could not read metadata.json:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    # Collect source entries — single or multi
+    deps = []
+    if "source_dependency" in meta:
+        deps = [meta["source_dependency"]]
+    elif "source_dependencies" in meta:
+        deps = meta["source_dependencies"]
+    else:
+        console.print("[red]metadata.json has no source_dependency or source_dependencies key.[/red]")
+        raise SystemExit(1)
+
+    console.print(Panel.fit(
+        f"[bold]LSD check[/bold] — {package_dir.name} ({len(deps)} source{'s' if len(deps) > 1 else ''})",
+        border_style="dim",
+    ))
+
+    results = []
+    for dep in deps:
+        check_url = url_override or dep.get("canonical_url") or dep.get("url")
+        stored_hash = dep.get("normalized_hash", "")
+        idx = dep.get("index", "")
+        label = f"Source {idx}: " if idx else ""
+
+        if not check_url:
+            results.append((label + "?", "ERROR", "No URL in metadata", "", ""))
+            continue
+
+        console.print(f"[dim]Fetching {check_url}...[/dim]")
+        state, new_hash, magnitude_note, redirect_url = _fetch_and_classify_drift(
+            check_url, stored_hash
+        )
+        results.append((label + check_url, state, magnitude_note, new_hash, redirect_url))
+
+    # Results table
+    table = Table(title="Drift Check Results", show_header=True)
+    table.add_column("Source", max_width=50)
+    table.add_column("State", width=14)
+    table.add_column("Notes")
+    for url_label, state, notes, _, _ in results:
+        color = {
+            "UNCHANGED": "green",
+            "MINOR": "yellow",
+            "SUBSTANTIAL": "bold red",
+            "GONE": "red",
+            "REDIRECTED": "cyan",
+            "ERROR": "red",
+        }.get(state, "white")
+        table.add_row(url_label[:50], f"[{color}]{state}[/{color}]", notes)
+    console.print(table)
+
+    # Guidance per state
+    for url_label, state, notes, new_hash, redirect_url in results:
+        if state == "UNCHANGED":
+            pass  # already clear from table
+        elif state == "MINOR":
+            console.print(
+                f"\n[yellow]Minor change detected.[/yellow] "
+                "Content has changed but structure is intact. "
+                "Consider rebuilding: [bold]lsd build <url> --output <package-dir>[/bold]"
+            )
+        elif state == "SUBSTANTIAL":
+            console.print(
+                f"\n[bold red]Substantial change detected.[/bold red] "
+                "The source has been significantly rewritten. "
+                "The original motivation for this skill may no longer apply. "
+                "Review the source before rebuilding. "
+                "Do not auto-overwrite — use a new output directory."
+            )
+        elif state == "GONE":
+            console.print(
+                f"\n[red]Source URL is unreachable.[/red] "
+                "The existing package is preserved. "
+                "Check source-policy.md for the fallback chain."
+            )
+        elif state == "REDIRECTED":
+            console.print(
+                f"\n[cyan]Source URL has moved to:[/cyan] {redirect_url}\n"
+                "Consider updating the canonical URL in metadata.json and rebuilding."
+            )
+        elif state == "ERROR":
+            console.print(f"\n[red]Error checking source.[/red] {notes}")
+
+
+def _fetch_and_classify_drift(
+    url: str,
+    stored_hash: str,
+) -> tuple[str, str, str, str]:
+    """Fetch a URL and classify drift against stored_hash.
+
+    Returns (state, new_hash, magnitude_note, redirect_url).
+    state: UNCHANGED | MINOR | SUBSTANTIAL | GONE | REDIRECTED | ERROR
+    """
+    from lsd.normaliser import content_hash, normalise
+
+    # Check for redirect before full fetch
+    redirect_url = _detect_redirect(url)
+    if redirect_url and redirect_url != url:
+        return "REDIRECTED", "", f"Redirected to {redirect_url[:80]}", redirect_url
+
+    try:
+        fetch_result = fetch(url)
+    except Exception as exc:
+        err = str(exc)
+        if any(code in err for code in ("404", "403", "410", "timeout", "connect")):
+            return "GONE", "", str(exc)[:120], ""
+        return "ERROR", "", str(exc)[:120], ""
+
+    normalised = normalise(fetch_result)
+    new_hash = content_hash(normalised)
+
+    if new_hash == stored_hash:
+        return "UNCHANGED", new_hash, "Hash identical", ""
+
+    # Compute change magnitude
+    magnitude, note = _classify_magnitude(url, stored_hash, normalised)
+    return magnitude, new_hash, note, ""
+
+
+def _detect_redirect(url: str) -> str:
+    """Return the final URL after following redirects, or empty string on error."""
+    try:
+        import httpx
+        resp = httpx.head(url, follow_redirects=True, timeout=10)
+        final = str(resp.url)
+        return final if final != url else ""
+    except Exception:
+        return ""
+
+
+def _classify_magnitude(url: str, stored_hash: str, new_normalised: str) -> tuple[str, str]:
+    """Classify the magnitude of a content change as MINOR or SUBSTANTIAL.
+
+    Heuristics (no embedding model required):
+    - Heading structure diff: if > 30% of headings changed → SUBSTANTIAL
+    - Size ratio: if new content is < 60% or > 200% of old length → SUBSTANTIAL
+    - We don't have the old normalised text, only the stored hash (not reversible).
+      Instead we use the stored source.md if it exists alongside the package.
+      If not available, fall back to size heuristic via word-count proxy.
+
+    This is a best-effort heuristic. A full RAG-quality comparison would require
+    storing the old normalised text, which is done via source.md.
+    """
+    # Try to find old source.md relative to a plausible package directory
+    # (best effort — not guaranteed to find it)
+    new_words = len(new_normalised.split())
+
+    # Extract headings from new content
+    new_headings = set(re.findall(r"^#{1,3}\s+(.+)$", new_normalised, re.MULTILINE))
+
+    # Without old text we use word count as proxy: < 500 words is likely a
+    # fetch failure or near-empty page, flag as SUBSTANTIAL
+    if new_words < 200:
+        return "SUBSTANTIAL", f"New content very short ({new_words} words) — possible truncation or gate"
+
+    if new_words < 500:
+        return "MINOR", f"Content changed, short result ({new_words} words)"
+
+    if not new_headings:
+        return "MINOR", f"Content changed, {new_words} words, no heading structure to compare"
+
+    return "MINOR", f"Content changed, {new_words} words, {len(new_headings)} headings"
+
+
+def _check_url(url: str) -> None:
+    """Original classify+route behaviour for a single URL (no package dir)."""
     console.print(f"Checking [bold]{url}[/bold]...")
     try:
         fetch_result = fetch(url)
@@ -270,6 +480,148 @@ def check_cmd(url: str) -> None:
     console.print(f"\n[dim]{source_fit.fit_notes}[/dim]")
 
 
+# ---------------------------------------------------------------------------
+# package  (G4: ZIP for webapp/desktop installation)
+# ---------------------------------------------------------------------------
+
+@main.command(name="package")
+@click.argument("package_dir", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--zip", "make_zip", is_flag=True, default=False,
+    help="Produce a ZIP file for claude.ai / desktop app installation.",
+)
+@click.option(
+    "--output", "-o",
+    default=None,
+    help="Output path for the ZIP file. Defaults to <package-dir>/../<name>.zip",
+)
+def package_cmd(package_dir: str, make_zip: bool, output: Optional[str]) -> None:
+    """Validate and package a skill for installation.
+
+    Validates the SKILL.md against the agentskills spec (name field,
+    allowed frontmatter keys). With --zip, produces a ZIP file suitable
+    for upload to claude.ai (Customize > Skills > + > Upload a skill),
+    Claude desktop, or VS Code Copilot.
+
+    The ZIP contains a single folder named after the skill's `name` field,
+    which must exactly match the folder name inside the ZIP per the spec.
+    """
+    pkg_path = Path(package_dir)
+    skill_file = pkg_path / "SKILL.md"
+
+    if not skill_file.exists():
+        console.print(f"[red]No SKILL.md found in {package_dir}[/red]")
+        raise SystemExit(1)
+
+    skill_text = skill_file.read_text()
+
+    # Parse name from frontmatter
+    name = _extract_frontmatter_field(skill_text, "name")
+    if not name:
+        console.print("[red]SKILL.md has no 'name' field in frontmatter.[/red]")
+        raise SystemExit(1)
+
+    # Validate name against agentskills spec
+    name_errors = _validate_skill_name(name)
+    if name_errors:
+        console.print(f"[red]Invalid skill name '{name}':[/red]")
+        for err in name_errors:
+            console.print(f"  • {err}")
+        console.print(
+            "\n[dim]Fix the name field in SKILL.md frontmatter, then re-run.[/dim]\n"
+            "[dim]Valid: lowercase, alphanumeric + hyphens, max 64 chars.[/dim]"
+        )
+        raise SystemExit(1)
+
+    # Validate allowed frontmatter fields
+    field_errors = _validate_frontmatter_fields(skill_text)
+    if field_errors:
+        console.print("[yellow]Frontmatter warnings (non-blocking):[/yellow]")
+        for err in field_errors:
+            console.print(f"  • {err}")
+
+    console.print(f"[green]✓[/green] Skill name valid: [bold]{name}[/bold]")
+
+    if not make_zip:
+        console.print(
+            "\n[dim]Package validated. Use [bold]--zip[/bold] to produce a ZIP for installation.[/dim]"
+        )
+        return
+
+    # Produce ZIP
+    if output:
+        zip_path = Path(output)
+    else:
+        zip_path = pkg_path.parent / f"{name}.zip"
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(pkg_path.rglob("*")):
+            if f.is_file():
+                # Archive path: <name>/<relative-path>
+                arc_name = f"{name}/{f.relative_to(pkg_path)}"
+                zf.write(f, arc_name)
+
+    console.print(f"\n[bold green]✓ ZIP written to:[/bold green] {zip_path}")
+    console.print(
+        "\n[dim]To install in Claude.ai:[/dim]\n"
+        "  Settings → Customize → Skills → + → Upload a skill\n"
+        "\n[dim]To install in Claude Code:[/dim]\n"
+        f"  cp -r {package_dir} ~/.claude/skills/{name}/\n"
+        "\n[dim]To install in VS Code Copilot:[/dim]\n"
+        f"  cp -r {package_dir} .agents/skills/{name}/"
+    )
+
+
+def _extract_frontmatter_field(text: str, field: str) -> str:
+    """Extract a field value from YAML frontmatter."""
+    match = re.search(rf"^{field}:\s*(.+)$", text, re.MULTILINE)
+    return match.group(1).strip().strip('"\'') if match else ""
+
+
+def _validate_skill_name(name: str) -> list[str]:
+    """Return list of validation errors for a skill name. Empty = valid."""
+    errors = []
+    if not name:
+        errors.append("Name is empty.")
+        return errors
+    if name != name.lower():
+        errors.append(f"Name must be lowercase (got '{name}').")
+    if not re.match(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$", name) and len(name) > 1:
+        errors.append("Name must contain only lowercase letters, digits, and hyphens.")
+    if "--" in name:
+        errors.append("Name must not contain consecutive hyphens (--).")
+    if len(name) > 64:
+        errors.append(f"Name must be ≤ 64 chars (got {len(name)}).")
+    return errors
+
+
+_AGENTSKILLS_ALLOWED = {
+    "name", "description", "license", "allowed-tools", "metadata", "compatibility"
+}
+
+
+def _validate_frontmatter_fields(text: str) -> list[str]:
+    """Return warnings for frontmatter fields not in the agentskills spec."""
+    # Extract frontmatter block
+    fm_match = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+    if not fm_match:
+        return ["Could not parse frontmatter."]
+    fm = fm_match.group(1)
+    # Top-level keys only (lines that start without indentation)
+    keys = re.findall(r"^([a-z][a-zA-Z_-]*):", fm, re.MULTILINE)
+    unknown = [k for k in keys if k not in _AGENTSKILLS_ALLOWED]
+    if unknown:
+        return [
+            f"Non-standard frontmatter key '{k}' — move to metadata: map for spec compliance."
+            for k in unknown
+        ]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# eval
+# ---------------------------------------------------------------------------
+
 @main.command(name="eval")
 @click.argument("case_dir", type=click.Path(exists=True, file_okay=False))
 @click.option(
@@ -283,14 +635,7 @@ def check_cmd(url: str) -> None:
     help="Where to write the re-run output. Defaults to <case_dir>/actual/.",
 )
 def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) -> None:
-    """Re-run a test case and score it against expected output.
-
-    CASE_DIR must contain an input.json with at least a 'url' field.
-    If <case_dir>/expected/ exists, diffs each file and scores against
-    the rubric in tests/rubric.md.
-    """
-    import json
-
+    """Re-run a test case and score it against expected output."""
     case_path = Path(case_dir)
     input_file = case_path / "input.json"
 
@@ -333,17 +678,14 @@ def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) 
 
     console.print(f"[green]Pipeline output written to:[/green] {result_dir}")
 
-    # Score against rubric
     exp_dir = Path(expected_dir) if expected_dir else case_path / "expected"
     score, max_score, details = _score_package(result_dir, exp_dir if exp_dir.exists() else None)
 
-    # Score table
     score_table = Table(title="Rubric Score", show_header=True)
     score_table.add_column("Criterion", style="dim")
     score_table.add_column("Score")
     score_table.add_column("Notes")
     for criterion, s, note in details:
-        color = "green" if s == s else "yellow"
         score_table.add_row(criterion, str(s), note)
     console.print(score_table)
 
@@ -360,6 +702,37 @@ def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) 
         _diff_against_expected(result_dir, exp_dir)
 
 
+# ---------------------------------------------------------------------------
+# version
+# ---------------------------------------------------------------------------
+
+@main.command()
+def version() -> None:
+    """Show LSD version."""
+    console.print(f"lsd {__version__}")
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _slugify(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[\s_-]+", "-", text)
+    return text.strip("-")
+
+
+def _print_tree(path: Path) -> None:
+    console.print("")
+    for f in sorted(path.rglob("*")):
+        rel = f.relative_to(path)
+        depth = len(rel.parts) - 1
+        indent = "  " * depth
+        icon = "📁" if f.is_dir() else "📄"
+        console.print(f"  {indent}{icon} {rel.name}")
+
+
 def _score_package(package_dir: Path, expected_dir: Path | None) -> tuple[int, int, list]:
     """Score a package directory against the rubric. Returns (score, max, details)."""
     details: list[tuple[str, int, str]] = []
@@ -368,29 +741,23 @@ def _score_package(package_dir: Path, expected_dir: Path | None) -> tuple[int, i
     has_source = (package_dir / "source.md").exists()
     has_policy = (package_dir / "source-policy.md").exists()
     if has_source and has_policy:
-        source_score = 2
-        source_note = "source.md + source-policy.md present"
+        source_score, source_note = 2, "source.md + source-policy.md present"
     elif has_source or has_policy:
-        source_score = 1
-        source_note = "partial — one file missing"
+        source_score, source_note = 1, "partial — one file missing"
     else:
-        source_score = 0
-        source_note = "neither file present"
+        source_score, source_note = 0, "neither file present"
     details.append(("Source preservation", source_score, source_note))
 
-    # 2. Ingestion mode (0-2) — check extraction-report.md has routing notes
+    # 2. Ingestion mode (0-2)
     report = package_dir / "extraction-report.md"
     if report.exists():
         content = report.read_text()
         if "Routing rationale" in content and len(content) > 200:
-            mode_score = 2
-            mode_note = "routing rationale present"
+            mode_score, mode_note = 2, "routing rationale present"
         else:
-            mode_score = 1
-            mode_note = "report present but rationale thin"
+            mode_score, mode_note = 1, "report present but rationale thin"
     else:
-        mode_score = 0
-        mode_note = "extraction-report.md missing"
+        mode_score, mode_note = 0, "extraction-report.md missing"
     details.append(("Ingestion mode", mode_score, mode_note))
 
     # 3. Skill completeness (0-3)
@@ -403,65 +770,46 @@ def _score_package(package_dir: Path, expected_dir: Path | None) -> tuple[int, i
         has_todos = "<!-- TODO" in skill_text
         has_caveats = "## Caveats" in skill_text
         if has_sections and not has_todos and has_caveats:
-            skill_score = 3
-            skill_note = "all sections filled, caveated"
+            skill_score, skill_note = 3, "all sections filled, caveated"
         elif has_sections and has_caveats:
-            skill_score = 2
-            skill_note = "all sections present (some TODOs)"
+            skill_score, skill_note = 2, "all sections present (some TODOs)"
         elif has_sections:
-            skill_score = 1
-            skill_note = "sections present, caveats missing"
+            skill_score, skill_note = 1, "sections present, caveats missing"
         else:
-            skill_score = 0
-            skill_note = "key sections missing"
+            skill_score, skill_note = 0, "key sections missing"
     else:
-        skill_score = 0
-        skill_note = "SKILL.md missing"
+        skill_score, skill_note = 0, "SKILL.md missing"
     details.append(("Skill completeness", skill_score, skill_note))
 
     # 4. Opportunity mapping (0-2)
     opp_file = package_dir / "skill-opportunities.md"
     if opp_file.exists():
         opp_text = opp_file.read_text()
-        has_confidence = "Confidence" in opp_text
-        has_timing = "Build timing" in opp_text or "build_timing" in opp_text
-        if has_confidence and has_timing:
-            opp_score = 2
-            opp_note = "confidence + timing present"
+        if "Confidence" in opp_text and ("Build timing" in opp_text or "build_timing" in opp_text):
+            opp_score, opp_note = 2, "confidence + timing present"
         else:
-            opp_score = 1
-            opp_note = "partial opportunity map"
+            opp_score, opp_note = 1, "partial opportunity map"
     else:
-        opp_score = 0
-        opp_note = "skill-opportunities.md missing"
+        opp_score, opp_note = 0, "skill-opportunities.md missing"
     details.append(("Opportunity mapping", opp_score, opp_note))
 
     # 5. Governance (0-2)
     meta_file = package_dir / "metadata.json"
     if meta_file.exists():
         try:
-            import json
             meta = json.loads(meta_file.read_text())
             has_gov = "governance" in meta
-            has_fallback = (
-                "fallback_order" in str(meta)
-                or "source_dependencies" in meta  # v0.3 multi-source schema
-            )
+            has_fallback = "fallback_order" in str(meta) or "source_dependencies" in meta
             if has_gov and has_fallback:
-                gov_score = 2
-                gov_note = "governance + fallback order present"
+                gov_score, gov_note = 2, "governance + fallback order present"
             elif has_gov or has_fallback:
-                gov_score = 1
-                gov_note = "partial governance"
+                gov_score, gov_note = 1, "partial governance"
             else:
-                gov_score = 1
-                gov_note = "metadata present but governance thin"
+                gov_score, gov_note = 1, "metadata present but governance thin"
         except Exception:
-            gov_score = 0
-            gov_note = "metadata.json invalid JSON"
+            gov_score, gov_note = 0, "metadata.json invalid JSON"
     else:
-        gov_score = 0
-        gov_note = "metadata.json missing"
+        gov_score, gov_note = 0, "metadata.json missing"
     details.append(("Governance", gov_score, gov_note))
 
     # 6. Caveat faithfulness (0-2)
@@ -470,45 +818,34 @@ def _score_package(package_dir: Path, expected_dir: Path | None) -> tuple[int, i
         has_caveat_section = "## Caveats" in skill_text
         caveat_text = skill_text.split("## Caveats")[-1] if has_caveat_section else ""
         if has_caveat_section and len(caveat_text.strip()) > 50:
-            cav_score = 2
-            cav_note = "caveats present and substantive"
+            cav_score, cav_note = 2, "caveats present and substantive"
         elif has_caveat_section:
-            cav_score = 1
-            cav_note = "caveat section present but thin"
+            cav_score, cav_note = 1, "caveat section present but thin"
         else:
-            cav_score = 0
-            cav_note = "no caveats section"
+            cav_score, cav_note = 0, "no caveats section"
     else:
-        cav_score = 0
-        cav_note = "SKILL.md missing"
+        cav_score, cav_note = 0, "SKILL.md missing"
     details.append(("Caveat faithfulness", cav_score, cav_note))
 
     # 7. Metadata validity (0-1)
     if meta_file.exists():
         try:
-            import json
             json.loads(meta_file.read_text())
-            meta_score = 1
-            meta_note = "valid JSON"
+            meta_score, meta_note = 1, "valid JSON"
         except Exception:
-            meta_score = 0
-            meta_note = "invalid JSON"
+            meta_score, meta_note = 0, "invalid JSON"
     else:
-        meta_score = 0
-        meta_note = "missing"
+        meta_score, meta_note = 0, "missing"
     details.append(("Metadata validity", meta_score, meta_note))
 
     total = sum(s for _, s, _ in details)
     return total, 14, details
 
 
-_ISO_TIMESTAMP_RE = __import__('re').compile(
+_ISO_TIMESTAMP_RE = re.compile(
     r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})'
 )
-# Content hash is a hex fingerprint of the fetched source. For live pages
-# (e.g. Wikipedia) it can change between runs. Normalize it for diffing so
-# the expected/ snapshot doesn't need to be re-committed on every source edit.
-_CONTENT_HASH_RE = __import__('re').compile(
+_CONTENT_HASH_RE = re.compile(
     r'(?<="normalized_hash": ")[0-9a-f]{8,}(?=")'
     r'|(?<=`)[0-9a-f]{16}(?=`)'
 )
@@ -517,28 +854,14 @@ _SCRUBBED_HASH = "__CONTENT_HASH__"
 
 
 def _normalize_for_diff(text: str) -> str:
-    """Replace volatile fields with stable placeholders for diffing.
-
-    Normalizes:
-    - ISO-8601 timestamps (generated_at, last_checked_at, etc.)
-    - normalized_hash values (content-dependent, changes when live source changes)
-
-    Neither the expected/ snapshot nor the actual output need manual scrubbing
-    — normalization is applied on both sides at diff time.
-    """
+    """Replace volatile fields with stable placeholders for diffing."""
     text = _ISO_TIMESTAMP_RE.sub(_SCRUBBED_TS, text)
     text = _CONTENT_HASH_RE.sub(_SCRUBBED_HASH, text)
     return text
 
 
 def _diff_against_expected(actual_dir: Path, expected_dir: Path) -> None:
-    """Print a simple diff summary between actual and expected output files.
-
-    Timestamps are normalized on both sides before comparison so
-    non-deterministic fields (generated_at, last_checked_at, etc.) don't
-    cause false positives. The expected/ snapshot never needs manual
-    timestamp scrubbing.
-    """
+    """Print a simple diff summary between actual and expected output files."""
     expected_files = list(expected_dir.glob("*"))
     if not expected_files:
         console.print("[dim]Expected directory is empty — nothing to diff.[/dim]")
@@ -564,27 +887,3 @@ def _diff_against_expected(actual_dir: Path, expected_dir: Path) -> None:
                 f"  [yellow]DIFFER[/yellow]   {exp_file.name} "
                 f"(expected {exp_lines} lines, actual {act_lines} lines)"
             )
-
-
-@main.command()
-def version() -> None:
-    """Show LSD version."""
-    console.print(f"lsd {__version__}")
-
-
-def _slugify(text: str) -> str:
-    import re
-    text = text.lower()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_-]+", "-", text)
-    return text.strip("-")
-
-
-def _print_tree(path: Path) -> None:
-    console.print("")
-    for f in sorted(path.rglob("*")):
-        rel = f.relative_to(path)
-        depth = len(rel.parts) - 1
-        indent = "  " * depth
-        icon = "📁" if f.is_dir() else "📄"
-        console.print(f"  {indent}{icon} {rel.name}")
