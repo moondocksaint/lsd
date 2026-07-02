@@ -2,20 +2,17 @@
 
 Orchestrates: fetch → classify → route → ingest → map → compile → write.
 
-Audit fixes (v0.5):
-  - BuildContext no longer carries builder_version (removed field); lsd_version
-    is imported from __init__ directly by compiler.py and writer.py.
-  - SourceEntry.opportunity_map is now populated in _process_one() so
-    per-source opportunity data is not discarded before write_multi_package().
-  - estimated_tokens is stored in MultiSourceBuildContext so writer and
-    CLI can surface it without re-computing.
+Ponytail fixes:
+  - Routing dataclass removed: it was a single-caller bag of five fields
+    unpacked immediately in build(). prepare() now returns a plain tuple.
+  - estimate_tokens / combined_token_estimate inlined: both were one-liners
+    that didn't justify named functions in retrieval/naive.py.
   - NaiveRetrievalBackend truncation flag is propagated via RetrievalIndex.was_truncated.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 
 from lsd.backends import get_visual_backend
@@ -38,42 +35,32 @@ from lsd.writer import write_package
 log = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_THRESHOLD = 50_000
+_CHARS_PER_TOKEN = 3.5
 
 
-@dataclass
-class Routing:
-    """Results of the fetch → classify → route phase."""
-    fetch: FetchResult
-    source_fit: SourceFit
-    visual_backend: IngestionBackend | None
-    mode: IngestionMode
-    routing_notes: str
-
-
-def prepare(url: str, mode_override: IngestionMode | None = None) -> Routing:
+def prepare(
+    url: str, mode_override: IngestionMode | None = None
+) -> tuple[FetchResult, SourceFit, IngestionBackend | None, IngestionMode, str]:
+    """Fetch → classify → route. Returns (fetch, fit, visual_backend, mode, notes)."""
     fetch_result = fetch(url)
     source_fit = classify(fetch_result)
     visual_backend = get_visual_backend()
     mode, routing_notes = route(
         fetch_result, source_fit, visual_backend is not None, override=mode_override
     )
-    return Routing(fetch_result, source_fit, visual_backend, mode, routing_notes)
+    return fetch_result, source_fit, visual_backend, mode, routing_notes
 
 
 def build(
     url: str,
     output_dir: Path,
     mode_override: IngestionMode | None = None,
-    routing: Routing | None = None,
+    routing: tuple | None = None,
 ) -> Path:
     if routing is None:
         routing = prepare(url, mode_override)
 
-    fetch_result = routing.fetch
-    source_fit = routing.source_fit
-    visual_backend = routing.visual_backend
-    mode = routing.mode
-    routing_notes = routing.routing_notes
+    fetch_result, source_fit, visual_backend, mode, routing_notes = routing
 
     visual_result = None
     if mode in ("hybrid", "visual-first") and visual_backend is not None:
@@ -88,9 +75,7 @@ def build(
     )
 
     opportunity_map = map_opportunities(source_fit, fetch_result.canonical_url)
-
-    from lsd.retrieval.naive import estimate_tokens
-    estimated_tokens = estimate_tokens(fetch_result.text)
+    estimated_tokens = int(len(fetch_result.text) / _CHARS_PER_TOKEN)
 
     ctx = BuildContext(
         ingestion=ingestion,
@@ -117,21 +102,19 @@ def build_multi(
     from lsd.normaliser import normalise
     from lsd.opportunity_mapper import map_opportunities_multi
     from lsd.retrieval import get_retrieval_backend
-    from lsd.retrieval.naive import combined_token_estimate
 
     def _process_one(idx_url: tuple[int, str]) -> SourceEntry:
         idx, url = idx_url
-        routing = prepare(url, mode_override)
-        norm = normalise(routing.fetch)
-        # Audit fix: compute and preserve per-source opportunity_map
-        opp = map_opportunities(routing.source_fit, routing.fetch.canonical_url)
+        fetch_result, source_fit, _backend, ing_mode, _notes = prepare(url, mode_override)
+        norm = normalise(fetch_result)
+        opp = map_opportunities(source_fit, fetch_result.canonical_url)
         return SourceEntry(
             url=url,
-            fetch_result=routing.fetch,
-            fit=routing.source_fit,
-            source_type=routing.fetch.source_type,
+            fetch_result=fetch_result,
+            fit=source_fit,
+            source_type=fetch_result.source_type,
             normalised=norm,
-            ingestion_mode=routing.mode,
+            ingestion_mode=ing_mode,
             index=idx,
             opportunity_map=opp,
         )
@@ -152,8 +135,9 @@ def build_multi(
         )
         for e in entries
     ]
-    # Audit fix: store estimated_tokens in context
-    estimated_tokens = combined_token_estimate(indexed)
+
+    # ponytail: inlined from retrieval/naive.py — both were int(len/3.5) one-liners
+    estimated_tokens = int(sum(len(s.text) for s in indexed) / _CHARS_PER_TOKEN)
     if estimated_tokens > token_threshold:
         log.warning(
             "Combined sources are ~%d estimated tokens (threshold: %d). "
@@ -165,8 +149,6 @@ def build_multi(
     retrieval_index = ret_backend.index(indexed)
 
     conflict_report = detect_conflicts(entries)
-    # Audit fix: map_opportunities_multi now reads per-source opportunity_map
-    # from SourceEntry instead of discarding it
     combined_opportunities = map_opportunities_multi(entries)
 
     ctx = MultiSourceBuildContext(

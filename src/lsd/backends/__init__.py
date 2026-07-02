@@ -11,10 +11,15 @@ To add a new backend (including a future native fork):
   4. Register it in get_visual_backend() below.
 
 Nothing outside this package needs to change.
+
+Ponytail fixes:
+  - TextBackend removed: it was a marker class with no callers.
+    "No visual backend" is represented as None throughout the pipeline.
+  - get_visual_backend(): ImportError now caught separately from
+    instantiation errors so backend construction failures propagate.
 """
 
 from lsd.backends.base import IngestionBackend
-from lsd.backends.text import TextBackend
 
 
 def get_visual_backend() -> IngestionBackend | None:
@@ -27,12 +32,12 @@ def get_visual_backend() -> IngestionBackend | None:
     """
     try:
         from lsd.backends.pixelrag import PixelRAGBackend  # noqa: PLC0415
-        b = PixelRAGBackend()
-        if b.is_available():
-            return b
     except ImportError:
-        pass
+        return None
+    b = PixelRAGBackend()
+    if b.is_available():
+        return b
     return None
 
 
-__all__ = ["IngestionBackend", "TextBackend", "get_visual_backend"]
+__all__ = ["IngestionBackend", "get_visual_backend"]

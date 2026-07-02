@@ -4,6 +4,9 @@ Audit fix (v0.5): retrieve() now sets RetrievalIndex.was_truncated = True
 when the token budget is hit, so callers (writer, CLI) can surface this
 rather than silently discarding chunks.
 
+Ponytail fix: estimate_tokens() and combined_token_estimate() removed —
+both were one-liners with a single caller (pipeline.py). Inlined there.
+
 Swap-candidate criteria: replace when any alternative scores >15% better
 on grounding accuracy across the standard eval case set. First candidates:
 BM25 (sparse keyword, no GPU, good for structured docs) or a dense
@@ -89,17 +92,8 @@ class NaiveRetrievalBackend(RetrievalBackend):
                         char_offset=chunk.char_offset,
                         score=chunk.score,
                     ))
-                # Audit fix: mark the index as truncated
                 index.was_truncated = True
                 break
             selected.append(chunk)
             used_chars += len(chunk.text)
         return selected
-
-
-def estimate_tokens(text: str) -> int:
-    return int(len(text) / _CHARS_PER_TOKEN)
-
-
-def combined_token_estimate(sources: list[IndexedSource]) -> int:
-    return estimate_tokens("".join(s.text for s in sources))

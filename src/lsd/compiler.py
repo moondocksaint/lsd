@@ -6,7 +6,15 @@ Changes in v0.5 (opportunity + audit pass):
   - _caveat_block: reads SourceAssessment.limitations and stability_warning
   - _tool_candidates_block: new helper; surfaces ToolCandidate objects in
     the caveats section
-  - All other logic unchanged from the previous version.
+
+Ponytail fixes:
+  - _slugify_name removed: moved to lsd.utils.slugify (dedup with cli.py).
+  - compile_skill_multi() no longer accepts/rebuilds a retrieval_backend
+    param; reads ctx._retrieval_backend / ctx._retrieval_index directly,
+    matching what pipeline.build_multi() already attaches and what
+    write_multi_package() already does. Removes duplicated indexing work.
+  - _parse_llm_sections: multi-alternation regex replaced with three
+    named-capture groups for debuggability.
 """
 
 from __future__ import annotations
@@ -16,6 +24,7 @@ import re
 
 from lsd.llm.base import LLMBackend
 from lsd.models import BuildContext, MultiSourceBuildContext, OpportunityMap
+from lsd.utils import slugify
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +61,12 @@ def compile_skill(
 def compile_skill_multi(
     ctx: MultiSourceBuildContext,
     llm_backend: LLMBackend | None = None,
-    retrieval_backend=None,
 ) -> tuple[str, str | None]:
+    """Compile a multi-source SKILL.md.
+
+    Ponytail fix: retrieval backend/index are read from ctx attrs set by
+    pipeline.build_multi() — no need to re-index here.
+    """
     from lsd.models import IndexedSource
     from lsd.retrieval import get_retrieval_backend
 
@@ -65,20 +78,23 @@ def compile_skill_multi(
         except Exception as exc:
             log.warning("Could not initialise LLM backend (%s); using heuristic fallback.", exc)
 
-    ret_backend = retrieval_backend
-    if ret_backend is None:
-        ret_backend = get_retrieval_backend()
+    # Read pre-built retrieval index from ctx (set by pipeline.build_multi)
+    ret_backend = getattr(ctx, "_retrieval_backend", None)
+    ret_index = getattr(ctx, "_retrieval_index", None)
 
-    indexed = [
-        IndexedSource(index=e.index, url=e.url,
-                      source_file=f"source-{e.index}.md", text=e.normalised)
-        for e in ctx.sources
-    ]
-    try:
-        ret_index = ret_backend.index(indexed)
-    except Exception as exc:
-        log.warning("Retrieval indexing failed (%s); falling back to heuristic.", exc)
-        return _compile_heuristic_multi(ctx), None
+    if ret_backend is None or ret_index is None:
+        # Fallback: build index if called outside of pipeline.build_multi
+        ret_backend = get_retrieval_backend()
+        indexed = [
+            IndexedSource(index=e.index, url=e.url,
+                          source_file=f"source-{e.index}.md", text=e.normalised)
+            for e in ctx.sources
+        ]
+        try:
+            ret_index = ret_backend.index(indexed)
+        except Exception as exc:
+            log.warning("Retrieval indexing failed (%s); falling back to heuristic.", exc)
+            return _compile_heuristic_multi(ctx), None
 
     if backend is not None:
         try:
@@ -91,7 +107,7 @@ def compile_skill_multi(
 
 
 # ---------------------------------------------------------------------------
-# LLM paths (unchanged from previous version except skill_type plumbing)
+# LLM paths
 # ---------------------------------------------------------------------------
 
 def _compile_with_llm(ctx: BuildContext, backend: LLMBackend) -> str:
@@ -205,15 +221,6 @@ Return only the three sections."""
 # Template renderers
 # ---------------------------------------------------------------------------
 
-def _slugify_name(text: str, max_len: int = 60) -> str:
-    s = text.lower()
-    s = re.sub(r"[^\w\s-]", "", s)
-    s = re.sub(r"[\s_]+", "-", s)
-    s = re.sub(r"-{2,}", "-", s)
-    s = s.strip("-")
-    return s[:max_len].rstrip("-")
-
-
 def _allowed_tools_for_skill_type(skill_type: str) -> str:
     """Return a space-separated allowed-tools string appropriate for the skill type.
 
@@ -255,8 +262,7 @@ def _render_template(
 
     skill_type = opp.recommended_skill_type
     skill_type_display = skill_type.replace("_", " ").title()
-    raw_name = f"{skill_type}-{_slugify_name(fetch.title)}"
-    name = _slugify_name(raw_name)
+    name = slugify(f"{skill_type}-{fetch.title}")
     allowed_tools = _allowed_tools_for_skill_type(skill_type)
     caveat_block = _caveat_block(mode, model_id, opp)
     related_block = _related_skills_block(opp)
@@ -340,7 +346,7 @@ def _render_template_multi(
     opp = ctx.combined_opportunities
     skill_type = opp.recommended_skill_type
     skill_type_display = skill_type.replace("_", " ").title()
-    name = _slugify_name(f"{skill_type}-multi")
+    name = slugify(f"{skill_type}-multi")
     allowed_tools = _allowed_tools_for_skill_type(skill_type)
     caveat_block = _caveat_block("text-first", model_id, opp)
     related_block = _related_skills_block(opp)
@@ -467,7 +473,6 @@ def _caveat_block(mode: str, model_id: str | None, opp: OpportunityMap) -> str:
             "via LSD_LLM_PROVIDER + API key env vars for full compilation."
         )
 
-    # Assessment-derived limitations
     if opp.assessment:
         a = opp.assessment
         if a.stability_warning:
@@ -481,7 +486,6 @@ def _caveat_block(mode: str, model_id: str | None, opp: OpportunityMap) -> str:
         for alt in a.better_alternatives:
             lines.append(f"\n**Better alternative:** {alt}")
 
-    # Ingestion mode note
     if mode == "hybrid":
         lines.append(
             "\nThe source was ingested in hybrid mode; visual artifacts are "
@@ -550,18 +554,24 @@ def _usage_hints(fit, skill_type: str) -> str:
 
 
 def _parse_llm_sections(text: str) -> tuple[str, str, str]:
-    section_re = re.compile(
-        r"##\s*Core principle\s*\n(.*?)(?=##\s*Workflow|\Z)"
-        r"|##\s*Workflow\s*\n(.*?)(?=##\s*Output format|\Z)"
-        r"|##\s*Output format\s*\n(.*?)(?=##\s|\Z)",
+    """Extract Core principle / Workflow / Output format from LLM response.
+
+    Ponytail fix: replaced multi-alternation regex with three named captures
+    so the intent is clear and the regex is debuggable.
+    """
+    core_m = re.search(
+        r"##\s*Core principle\s*\n(?P<core>.*?)(?=##\s|\Z)", text,
         re.DOTALL | re.IGNORECASE,
     )
-    core = workflow = output = ""
-    for m in section_re.finditer(text):
-        if m.group(1) is not None: core = m.group(1).strip()
-        elif m.group(2) is not None: workflow = m.group(2).strip()
-        elif m.group(3) is not None: output = m.group(3).strip()
-    core = core or "<!-- LLM response did not include a core principle -->"
-    workflow = workflow or "<!-- LLM response did not include a workflow -->"
-    output = output or "<!-- LLM response did not include an output format -->"
+    workflow_m = re.search(
+        r"##\s*Workflow\s*\n(?P<workflow>.*?)(?=##\s|\Z)", text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    output_m = re.search(
+        r"##\s*Output format\s*\n(?P<output>.*?)(?=##\s|\Z)", text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    core = core_m.group("core").strip() if core_m else "<!-- LLM response did not include a core principle -->"
+    workflow = workflow_m.group("workflow").strip() if workflow_m else "<!-- LLM response did not include a workflow -->"
+    output = output_m.group("output").strip() if output_m else "<!-- LLM response did not include an output format -->"
     return core, workflow, output

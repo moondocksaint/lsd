@@ -24,6 +24,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from lsd import __version__
+from lsd.utils import slugify
 from lsd.backends import get_visual_backend
 from lsd.classifier import classify
 from lsd.fetcher import fetch
@@ -208,22 +209,20 @@ def build_cmd(
             console.print(f"[red]Fetch failed:[/red] {exc}")
             raise SystemExit(1) from exc
 
-    fetch_result = routing.fetch
-    source_fit = routing.source_fit
-    visual_backend = routing.visual_backend
+    fetch_result, source_fit, visual_backend, _mode, _notes = routing
 
     table = Table(show_header=False, box=None, padding=(0, 1))
     table.add_row("[dim]URL[/dim]", fetch_result.canonical_url)
     table.add_row("[dim]Title[/dim]", fetch_result.title[:80])
     table.add_row("[dim]Words[/dim]", str(fetch_result.word_count))
-    table.add_row("[dim]Mode[/dim]", f"[bold cyan]{routing.mode}[/bold cyan]")
+    table.add_row("[dim]Mode[/dim]", f"[bold cyan]{_mode}[/bold cyan]")
     table.add_row("[dim]Fit[/dim]", source_fit.overall_fit)
     table.add_row(
         "[dim]Visual backend[/dim]",
         f"[green]{visual_backend.name}[/green]" if visual_backend else "[yellow]none (text-first only)[/yellow]",
     )
     console.print(table)
-    console.print(f"[dim]{routing.routing_notes}[/dim]")
+    console.print(f"[dim]{_notes}[/dim]")
 
     if dry_run:
         console.print("\n[yellow]Dry run — no files written.[/yellow]")
@@ -232,7 +231,7 @@ def build_cmd(
     if output:
         out_dir = Path(output)
     else:
-        slug = _slugify(fetch_result.title)[:40]
+        slug = slugify(fetch_result.title, max_len=40)
         out_dir = Path(".") / slug
 
     with Progress(
@@ -972,12 +971,6 @@ def version() -> None:
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
-
-def _slugify(text: str) -> str:
-    text = text.lower()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_-]+", "-", text)
-    return text.strip("-")
 
 
 def _print_tree(path: Path) -> None:
