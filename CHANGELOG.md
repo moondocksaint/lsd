@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Docs
+- **Clarified the job of each top-level doc and removed the resulting duplication.**
+  `HANDOFF.md`'s "Suggestions for the next contributor" section had gone stale and
+  self-contradicting (it listed `skills-ref validate` and `lsd eval --init` as open
+  suggestions while its own later sections recorded both as shipped). HANDOFF.md is
+  now strictly a decision log; live actionable items live in exactly one place each:
+  README.md § Suggested next steps (near-term / blocked only on LLM access) and
+  ROADMAP.md § Open gaps for the next contributor (blocked on an external dependency,
+  plus unscheduled backlog — eval case expansion, description optimizer, MCP server
+  scaffold, carried over from HANDOFF's old list rather than dropped). Also corrected
+  ROADMAP's stale claim that the v0.4 retrieval default uses embeddings/FAISS — the
+  shipped default (`NaiveRetrievalBackend`) is lexical chunking with a token guard.
+
 ### Fixed
 - **Critical:** `compiler.py` raised `IndentationError` on import (a malformed
   local `SkillType` import from commit `e5f02c2`), which broke the entire `lsd`

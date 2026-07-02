@@ -216,6 +216,10 @@ an embedding model directly; it always calls `retrieve()`.
 stored inside the package directory (no hosted infrastructure required). Passable quality,
 zero operational overhead.
 
+**Status note (current as of v0.5.0):** the shipped default is `NaiveRetrievalBackend` —
+fixed-size chunking with a token-budget guard, not the embedding/FAISS default described
+above. That upgrade remains open; see "Open gaps for the next contributor" below.
+
 **Pluggable alternatives** (drop-in, same interface):
 - `PixelRAGRetrievalBackend` — calls `api.pixelrag.ai` or a local PixelRAG serve instance;
   retrieves over screenshot tiles rather than text chunks (better for visual-heavy sources)
@@ -303,6 +307,48 @@ The longer arc:
   with conflict detection and provenance preserved across the merge
 - **Offline / air-gapped mode**: for enterprises that cannot send source content to external
   LLMs — runs the compilation step against a local model (Ollama, llama.cpp)
+
+---
+
+## Open gaps for the next contributor
+
+Current, concrete gaps in the shipped implementation — as opposed to the aspirational
+version-by-version narrative above, some of which was superseded by simpler decisions made
+along the way (see the retrieval status note above). For the freshest actionable list —
+including anything gated only on configuring an LLM provider or regenerating an eval
+baseline, not on external dependencies — see README.md § Suggested next steps. HANDOFF.md
+records the rationale behind past decisions.
+
+### Blocked on an external dependency or upstream release
+
+- **PixelRAG visual backend** — `src/lsd/backends/pixelrag.py` wraps `pixelrag-render`,
+  which has not been publicly released. The `IngestionBackend` interface and adapter are
+  already in place; visual-first ingestion falls back to text-first until the package ships.
+- **Retrieval backend upgrade** — the shipped v0.4 default is `NaiveRetrievalBackend`
+  (fixed-size chunking + a token-budget guard, no embeddings). `RetrievalBackend` (see
+  `retrieval/base.py`) makes BM25, ColBERT, or a hosted-embeddings backend a drop-in swap
+  once one is available and clears the swap-candidate criteria above.
+- **Semantic-drift embedding similarity** — `lsd check` classifies drift with a lexical
+  `difflib.SequenceMatcher` ratio, which is blind to *semantic drift* (same words,
+  reorganised meaning). The swap point is `cli._content_similarity(old, new,
+  similarity_fn=None)`: pass an embedding-backed cosine `similarity_fn` once a low-latency
+  embeddings endpoint is available — nothing else in the drift path changes. No embedding
+  API is wired into any LSD backend today (the LLM backends are chat-only; retrieval is
+  lexical), and `scripts/check-drift.py` is deliberately `httpx`-only, so this can't be
+  built as a live feature yet.
+
+### Backlog — no external blocker, just unscheduled
+
+- **Expand the eval case set** — there is currently one eval case
+  (`tests/cases/wikipedia-ai-writing/`). A hybrid case (code documentation) and a
+  visual-first case (once PixelRAG is available) would give the regression harness
+  broader coverage.
+- **Description optimizer** — the meta-skill generates descriptions from source intent.
+  Running the Anthropic `skill-creator`'s `run_loop.py`-style trigger optimization on
+  generated descriptions would likely improve agent recall.
+- **MCP server scaffold** — when the opportunity mapper detects an `mcp_server` tool
+  candidate, offer to scaffold a minimal MCP server stub instead of just describing the
+  opportunity in `skill-opportunities.md`.
 
 ---
 

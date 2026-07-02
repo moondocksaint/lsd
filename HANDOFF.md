@@ -215,29 +215,27 @@ All three bugs discovered in the final audit were closed in commit `db126dec`:
 | `lsd init` command | Not scoped; project started from a URL-in, package-out model |
 | Skill composition (depend on other skills) | In ROADMAP.md as a future item; architecture needs to be designed |
 | Hosted web product | Out of scope for v0.5; described in ROADMAP.md |
-| `skills-ref validate` auto-run in pipeline | The `skills-ref` CLI is an external dependency not bundled with LSD; referenced in SKILL.md but not enforced programmatically |
+| `skills-ref validate` auto-run in pipeline | *(as of v0.5.0)* The `skills-ref` CLI is an external dependency not bundled with LSD; referenced in SKILL.md but not enforced programmatically. **Since done** — see *Follow-up pass* below: `lsd build` now runs it via its Python API and surfaces results. |
 | Blind A/B comparison eval | Anthropic skill-creator pattern; not applicable to LSD's regression-harness eval model |
 
 ---
 
-## Suggestions for the next contributor
+## Suggestions for the next contributor (superseded)
 
-### Priority 1 (closes known gaps)
-- **Wire `skills-ref validate` into `pipeline.build()`** — import as a subprocess call if `skills-ref` is installed, warn gracefully if not. This is the single clearest signal of spec compliance.
-- **Add `lsd eval --init`** — run a build and commit the output to `expected/`. Currently the only way to create a baseline is manually.
+This section originally tracked open TODOs as of v0.5.0. It has been superseded: most of
+its items are now done (see *Post-handoff maintenance* and *Follow-up pass* below), and
+tracking live TODOs here duplicated — and eventually contradicted — the same list
+maintained elsewhere. Live, actionable suggestions now live in two places, split by kind:
 
-### Priority 2 (completes the maintenance story)
-- **`lsd check --all-sources`** — iterate over all entries in `source_dependencies[]` in `metadata.json` and report a unified drift summary.
-- **GitHub Actions example** — add `.github/workflows/drift-check.yml` that runs `lsd check` on a configured package and opens an issue on SUBSTANTIAL drift. This makes source-dependency tracking actionable in CI.
+- **README.md § Suggested next steps** — near-term items, including anything blocked only
+  on configuring an LLM provider or regenerating an eval baseline.
+- **ROADMAP.md § Open gaps for the next contributor** — items blocked on an external
+  dependency or upstream release (PixelRAG, retrieval backend upgrade, semantic-drift
+  embedding similarity), plus unscheduled backlog (eval case expansion, description
+  optimizer, MCP server scaffold).
 
-### Priority 3 (quality)
-- **Retrieval backend upgrade** — `NaiveRetrievalBackend` is documented as the v0.4 placeholder. The swap criteria are in ROADMAP.md. When a better retrieval approach is available, it should implement `RetrievalBackend` and be registered in `retrieval/__init__.py`.
-- **Expand the eval case set** — there is currently one eval case (Wikipedia AI-writing). Adding a hybrid case (code documentation) and a visual-first case (when PixelRAG is available) would give the regression harness broader coverage.
-- **Description optimizer** — the meta-skill generates descriptions from source intent. Running the Anthropic `skill-creator`'s `run_loop.py`-style trigger optimization on generated descriptions would likely improve agent recall.
-
-### Priority 4 (product)
-- **MCP server scaffold** — when a `mcp_server` tool candidate is detected, offer to scaffold a minimal MCP server stub. The opportunity mapper already detects these.
-- **Web product** — the ROADMAP.md describes the full vision. The pipeline is ready; the web surface needs a FastAPI or similar wrapper around `pipeline.build()`.
+This document remains the place for *why* decisions were made — the sections above and the
+maintenance log below — not for tracking what's left to do.
 
 ---
 
