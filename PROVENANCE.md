@@ -146,6 +146,21 @@ section (see README.md § Suggested next steps for the regeneration steps).
 
 ---
 
+## Post-v0.5 — reconciliation to `main` + roadmap Phase 1–2
+
+Branch `claude/lsd-branch-reconciliation-mf39jh`. Reconciled the branch docs into
+`main` (single source of truth), then started the ROADMAP execution plan. Terse by
+design — see HANDOFF.md for rationale (Decision 24) and CHANGELOG.md `[Unreleased]`
+for the change list.
+
+| Round | Scope | One-line summary |
+|-------|-------|-------------------|
+| 1 | Reconciliation | Merged the reconciled docs into `main` (docs-only; test-count corrected to 116). |
+| 2 | Phase 1 | Added CI green gate (`.github/workflows/ci.yml`); folded the sequenced execution plan into ROADMAP.md. |
+| 3 | Phase 2 | MCP server scaffold — `writer._write_mcp_scaffold` emits `mcp-server/` on an `mcp_server` candidate. Suite 116 → 119. |
+
+---
+
 ## Eval diff normalization policy
 
 The `lsd eval` diff harness normalizes two volatile fields on **both sides**

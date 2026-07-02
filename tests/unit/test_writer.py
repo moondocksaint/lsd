@@ -5,7 +5,7 @@ from pathlib import Path
 
 from lsd.models import (
     BuildContext, FetchResult, IngestionResult, OpportunityMap,
-    SkillCandidate, SourceFit,
+    SkillCandidate, SourceFit, ToolCandidate,
 )
 from lsd.writer import write_package
 
@@ -81,3 +81,56 @@ def test_hybrid_creates_visual_dir(tmp_path: Path):
     ctx.ingestion.mode = "hybrid"
     out = write_package(ctx)
     assert (out / "visual").is_dir()
+
+
+def _add_mcp_candidate(ctx: BuildContext) -> BuildContext:
+    ctx.opportunity_map.tool_candidates.append(
+        ToolCandidate(
+            tool_type="mcp_server",
+            description="Expose the API as an MCP server for any MCP-compatible agent.",
+            why_not_skill="MCP server enables live execution; a skill only encodes knowledge.",
+            effort="high",
+            reference_url="https://modelcontextprotocol.io/quickstart/server",
+        )
+    )
+    return ctx
+
+
+def test_no_mcp_scaffold_without_candidate(tmp_path: Path):
+    ctx = _build_ctx(tmp_path)
+    out = write_package(ctx)
+    assert not (out / "mcp-server").exists()
+    meta = json.loads((out / "metadata.json").read_text())
+    assert meta["artifacts"]["mcp_scaffold"] is None
+
+
+def test_mcp_scaffold_created_when_candidate(tmp_path: Path):
+    ctx = _add_mcp_candidate(_build_ctx(tmp_path))
+    out = write_package(ctx)
+
+    server_dir = out / "mcp-server"
+    for fname in ("server.py", "requirements.txt", "README.md"):
+        assert (server_dir / fname).exists(), f"Missing mcp-server/{fname}"
+
+    server_py = (server_dir / "server.py").read_text()
+    assert "from mcp.server.fastmcp import FastMCP" in server_py
+    assert "@mcp.tool()" in server_py
+    assert "https://example.com" in server_py  # grounded in the source URL
+
+    readme = (server_dir / "README.md").read_text()
+    assert "MCP server enables live execution" in readme  # the why_not_skill rationale
+
+    meta = json.loads((out / "metadata.json").read_text())
+    assert meta["artifacts"]["mcp_scaffold"] == "mcp-server/"
+
+    opportunities = (out / "skill-opportunities.md").read_text()
+    assert "mcp-server/" in opportunities  # pointer to the scaffold
+
+
+def test_mcp_scaffold_server_is_valid_python(tmp_path: Path):
+    import ast
+
+    ctx = _add_mcp_candidate(_build_ctx(tmp_path))
+    out = write_package(ctx)
+    server_py = (out / "mcp-server" / "server.py").read_text()
+    ast.parse(server_py)  # raises SyntaxError if the scaffold is malformed

@@ -125,6 +125,7 @@ embedding similarity), see [`ROADMAP.md` § Open gaps for the next contributor](
 - **`lsd eval --init`** — builds a case straight into `expected/` to create the baseline, guarded by `--force`. Removes the manual first-baseline step.
 - **CI drift-check template** — `examples/ci/drift-check.yml` runs the package's bundled drift checker on a schedule and opens/updates a tracking issue on drift.
 - **Fixed the bundled `scripts/check-drift.py`** — it hashed raw page text instead of the LSD-normalised markdown, so it reported drift on every run; it now reproduces LSD's `normalized_hash`. Guarded by `tests/unit/test_drift_script_parity.py`.
+- **MCP server scaffold** — when an `mcp_server` tool candidate is detected, `lsd build` emits a runnable stub under `mcp-server/` (FastMCP `server.py` + `requirements.txt` + `README.md`) instead of only describing the opportunity. See `writer._write_mcp_scaffold`.
 
 > **Note on `lsd check --all-sources`:** already covered — `lsd check <package-dir>` iterates every entry in `metadata.json → source_dependencies` and reports a unified table, so no extra flag is needed.
 

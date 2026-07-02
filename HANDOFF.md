@@ -281,6 +281,24 @@ every entry in `metadata.json → source_dependencies` in one run.
 
 **Implementation:** `examples/ci/drift-check.yml` + `examples/ci/README.md`.
 
+### 24. The `mcp_server` tool candidate scaffolds a stub into the package
+
+**Decision:** When the opportunity mapper flags an `mcp_server` `ToolCandidate`, the
+writer emits a minimal MCP server stub under `mcp-server/` in the build output
+(`server.py` using `FastMCP`, `requirements.txt`, `README.md`) rather than only
+naming the opportunity in `skill-opportunities.md`.
+
+**Rationale:** A tool opportunity the user has to rebuild from scratch is much lower
+value than a runnable starting point. The scaffold lives as a spec-permitted extra
+directory inside the package (it does not touch `SKILL.md` frontmatter, so spec
+validation is unaffected). Content is deterministic — no timestamps or generated ids —
+so committed eval baselines and unit tests don't churn. Scaffolding is gated on the
+candidate actually being present, so non-API sources get nothing extra.
+
+**Implementation:** `writer._write_mcp_scaffold` / `_first_mcp_candidate`, wired into
+both `write_package` and `write_multi_package`; `metadata.json → artifacts.mcp_scaffold`
+records emission; `tests/unit/test_writer.py` covers present/absent and stub validity.
+
 ---
 
 ## Known bugs resolved
