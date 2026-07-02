@@ -1,6 +1,6 @@
 # LSD — Handoff Document
 
-> This document records every significant decision made during the development of LSD (Link-to-Skill Distiller) from v0.1 through v0.5, with rationale and suggestions for the next contributor. It is intended to be read alongside PROVENANCE.md (which records the build lineage) and CHANGELOG.md (which records what changed version by version).
+> This document records every significant decision made during the development of LSD (Link-to-Skill Distiller), from v0.1 through ongoing post-v0.5 review passes, with rationale. It is intended to be read alongside PROVENANCE.md (which records the build lineage — who/which session built what, terse and attribution-only) and CHANGELOG.md (which records what changed version by version, in full). This file should contain *why*, not *who* or *what* — if a new entry here starts re-narrating a change already described elsewhere, it belongs in one of those two files instead.
 
 ---
 
@@ -9,16 +9,19 @@
 LSD converts URLs into installable, versioned AI skill packages conforming to the [Agent Skills open standard](https://agentskills.io). It ships as a Python CLI (`lsd`), a meta-skill (`skills/lsd-builder/`) that wraps the CLI for conversational use, and a test harness with an eval baseline.
 
 **Current version:** 0.5.0  
-**Test suite:** 104 tests passing (see *Post-handoff maintenance* below; the
-earlier "81 passing" predated added tests and a build-breaking regression)  
+**Test suite:** 116 tests passing (PROVENANCE.md has the session-by-session
+count; the earlier "81 passing" predated added tests and a build-breaking
+regression, see Decisions 19–23 and Bug 4 below)  
 **Eval baseline:** 14/14 (Wikipedia AI-writing case, mercury-2, Inception dLLM).
 Note: the committed `expected/` snapshot predates the `## Gotchas` section, so
 `lsd eval` will now report a `DIFFER` on `SKILL.md` until the baseline is
 regenerated.
 
-> **Read this first.** The sections below are the original decision log written
-> at handoff. For what changed *after* handoff — including a critical fix — see
-> [Post-handoff maintenance](#post-handoff-maintenance) at the end.
+> **Read this first.** "Architecture decisions" and "Meta-skill decisions" below
+> were written at the original v0.5.0 handoff. "Decisions since v0.5.0" continues
+> the same numbering for later review passes — including a critical import-breaking
+> bug (see Bug 4 in the bugs table). This file only records *why*; see
+> PROVENANCE.md for *who/when* and CHANGELOG.md for *what changed*.
 
 ---
 
@@ -195,15 +198,104 @@ The meta-skill's post-build flow is fixed at 8 steps:
 
 ---
 
-## Known bugs resolved (v0.5)
+## Decisions since v0.5.0
 
-All three bugs discovered in the final audit were closed in commit `db126dec`:
+Continues the numbering above. These decisions came out of post-v0.5 review passes;
+see PROVENANCE.md for which session/commit produced each one, and CHANGELOG.md for
+the full change description — this section covers only the *why*.
+
+### 19. `## Gotchas` is a required fourth compiler section, not optional metadata
+
+**Decision:** The LLM compiler pass emits `## Gotchas` alongside Core principle,
+Workflow, and Output format in every compiled `SKILL.md`. A missing or
+`"none"`-equivalent answer renders a neutral placeholder note, not a raw TODO
+comment.
+
+**Rationale:** Community data identifies Gotchas (environment-specific facts, API
+quirks, version/auth/rate-limit constraints, silent-failure modes) as the
+highest-ROI content in a skill. Rendering a neutral note for an empty answer —
+rather than an empty section or a TODO-looking placeholder — avoids it reading
+as a bug when a source genuinely has none.
+
+**Implementation:** `compiler._gotchas_block()` / `_parse_optional_section()`.
+Tested in `test_compiler.py`.
+
+### 20. Semantic-drift similarity is a swap seam, not a shipped feature
+
+**Decision:** The drift classifier isolates its similarity computation behind
+`cli._content_similarity(old_lines, new_lines, similarity_fn=None)`, defaulting
+to a lexical `difflib.SequenceMatcher` ratio.
+
+**Rationale:** Semantic drift (same words, reorganised meaning) is invisible to
+lexical similarity, and an embedding-based cosine similarity is the fix — but no
+embedding API is wired into any LSD backend (LLM backends are chat-only;
+retrieval is lexical), and `scripts/check-drift.py` is deliberately `httpx`-only
+so it runs via `uv` with no `lsd` install; a live embedding call would need a
+provider + key + network and would break that standalone-script contract.
+Isolating the seam lets a future `similarity_fn` swap in without touching the
+rest of the drift path.
+
+**Implementation:** `cli._content_similarity()`. Tested in `test_drift.py`.
+
+### 21. Spec validation runs post-build; the dir-name/slug mismatch is a hint, not an error
+
+**Decision:** `lsd build` runs `skills-ref`'s validator (via
+`lsd.validation.validate_package()`) after writing the package and prints a
+pass/warn panel. The validator's directory-name/slug-mismatch message is
+surfaced as a hint, separate from the pass/fail verdict.
+
+**Rationale:** `skills-ref` is an optional dev dependency, so validation must
+degrade gracefully (a "spec check skipped" note) rather than fail the build when
+it's absent. The directory-name/slug check is about *packaging*, not `SKILL.md`
+content — `lsd build` writes into a user-chosen output directory, and `lsd
+package` is what aligns the installable archive's root folder with the slug —
+so a mismatch during `build` is expected, not a spec violation to block on.
+
+**Implementation:** `lsd/validation.py`, `cli._print_validation()`. Tested in
+`test_validation.py`.
+
+### 22. `lsd eval --init` refuses to overwrite an existing baseline without `--force`
+
+**Decision:** `lsd eval <case> --init` writes a fresh baseline into `expected/`;
+if that directory already has content, it exits with an error unless `--force`
+is also passed, in which case the directory is cleared first.
+
+**Rationale:** An eval baseline is a manually reviewed, hand-approved snapshot
+(see "How to add a new eval baseline" in PROVENANCE.md) — a bare `--init` re-run
+must not silently clobber a reviewed baseline with an unreviewed one. `--force`
+exists for the deliberate case (regenerating after a source or model change).
+
+**Implementation:** `cli._init_baseline()`. Tested in `test_eval_init.py`.
+
+### 23. The drift-check CI template is an example, not an active workflow
+
+**Decision:** `examples/ci/drift-check.yml` is a copy-paste GitHub Actions
+template, not a workflow LSD runs on itself.
+
+**Rationale:** The template runs `scripts/check-drift.py` against a package's
+`metadata.json` — but LSD's own repo is not a skill package (no `metadata.json`
+at its root), so an active workflow here would just fail. It belongs in the repo
+of whichever *skill package* it's watching. Related: a `lsd check --all-sources`
+flag was considered and found unnecessary — `_check_package` already iterates
+every entry in `metadata.json → source_dependencies` in one run.
+
+**Implementation:** `examples/ci/drift-check.yml` + `examples/ci/README.md`.
+
+---
+
+## Known bugs resolved
+
+Bugs 1–3 were discovered in the v0.5 final audit and closed in commit `db126dec`.
+Bugs 4–5 were found in later review passes (see PROVENANCE.md for session/commit
+attribution; CHANGELOG.md for the full fix description).
 
 | Bug | Root cause | Fix |
 |-----|-----------|-----|
 | Bug 1: ToolCandidate properties | `tool_type`, `effort_level` were stored as raw Literal values; callers expected human-readable labels | Implemented as `@property` methods on the dataclass |
 | Bug 2: `.verdict` AttributeError | `SourceAssessment` has `.skill_fit_verdict`, not `.verdict`; writer.py used the wrong attribute | Renamed all callsites to `.skill_fit_verdict` |
 | Bug 3: Verdict panel action mismatch | `_render_verdict_panel` used string literals that didn't match the `Literal` values in models.py | Aligned action strings across models.py, cli.py, and SKILL.md |
+| Bug 4: package unimportable | Commit `e5f02c2` left a mis-indented, redundant local `SkillType` import inside `compile_skill_multi()` — an `IndentationError` that broke the entire package and test suite despite docs claiming a green build | Removed the malformed import. Lesson: `pytest -q` (or `python -m compileall src/lsd`) catches this instantly — run it before committing |
+| Bug 5: standalone drift checker always reported drift | `scripts/check-drift.py` hashed raw fetched text; LSD's stored `normalized_hash` is over the *normalised* markdown — the two could never match, so every run looked like drift regardless of whether the source had changed | Rewrote the script's extraction/normalisation to mirror `lsd.fetcher` + `lsd.normaliser` exactly; `test_drift_script_parity.py` guards against the two diverging again |
 
 ---
 
@@ -215,29 +307,28 @@ All three bugs discovered in the final audit were closed in commit `db126dec`:
 | `lsd init` command | Not scoped; project started from a URL-in, package-out model |
 | Skill composition (depend on other skills) | In ROADMAP.md as a future item; architecture needs to be designed |
 | Hosted web product | Out of scope for v0.5; described in ROADMAP.md |
-| `skills-ref validate` auto-run in pipeline | The `skills-ref` CLI is an external dependency not bundled with LSD; referenced in SKILL.md but not enforced programmatically |
+| `skills-ref validate` auto-run in pipeline | *(as of v0.5.0)* The `skills-ref` CLI is an external dependency not bundled with LSD; referenced in SKILL.md but not enforced programmatically. **Since done** — see Decision 21: `lsd build` now runs it via its Python API and surfaces results. |
 | Blind A/B comparison eval | Anthropic skill-creator pattern; not applicable to LSD's regression-harness eval model |
 
 ---
 
-## Suggestions for the next contributor
+## Suggestions for the next contributor (superseded)
 
-### Priority 1 (closes known gaps)
-- **Wire `skills-ref validate` into `pipeline.build()`** — import as a subprocess call if `skills-ref` is installed, warn gracefully if not. This is the single clearest signal of spec compliance.
-- **Add `lsd eval --init`** — run a build and commit the output to `expected/`. Currently the only way to create a baseline is manually.
+This section originally tracked open TODOs as of v0.5.0. It has been superseded: most of
+its items are now done (see "Decisions since v0.5.0" and the bugs table below), and
+tracking live TODOs here duplicated — and eventually contradicted — the same list
+maintained elsewhere. Live, actionable suggestions now live in two places, split by kind:
 
-### Priority 2 (completes the maintenance story)
-- **`lsd check --all-sources`** — iterate over all entries in `source_dependencies[]` in `metadata.json` and report a unified drift summary.
-- **GitHub Actions example** — add `.github/workflows/drift-check.yml` that runs `lsd check` on a configured package and opens an issue on SUBSTANTIAL drift. This makes source-dependency tracking actionable in CI.
+- **README.md § Suggested next steps** — near-term items, including anything blocked only
+  on configuring an LLM provider or regenerating an eval baseline.
+- **ROADMAP.md § Open gaps for the next contributor** — items blocked on an external
+  dependency or upstream release (PixelRAG, retrieval backend upgrade, semantic-drift
+  embedding similarity), plus unscheduled backlog (eval case expansion, description
+  optimizer, MCP server scaffold).
 
-### Priority 3 (quality)
-- **Retrieval backend upgrade** — `NaiveRetrievalBackend` is documented as the v0.4 placeholder. The swap criteria are in ROADMAP.md. When a better retrieval approach is available, it should implement `RetrievalBackend` and be registered in `retrieval/__init__.py`.
-- **Expand the eval case set** — there is currently one eval case (Wikipedia AI-writing). Adding a hybrid case (code documentation) and a visual-first case (when PixelRAG is available) would give the regression harness broader coverage.
-- **Description optimizer** — the meta-skill generates descriptions from source intent. Running the Anthropic `skill-creator`'s `run_loop.py`-style trigger optimization on generated descriptions would likely improve agent recall.
-
-### Priority 4 (product)
-- **MCP server scaffold** — when a `mcp_server` tool candidate is detected, offer to scaffold a minimal MCP server stub. The opportunity mapper already detects these.
-- **Web product** — the ROADMAP.md describes the full vision. The pipeline is ready; the web surface needs a FastAPI or similar wrapper around `pipeline.build()`.
+This document remains the place for *why* decisions were made — the numbered decisions
+above (including "Decisions since v0.5.0") and the bugs table below — not for tracking
+what's left to do.
 
 ---
 
@@ -253,100 +344,17 @@ All three bugs discovered in the final audit were closed in commit `db126dec`:
 
 ---
 
+## Post-v0.5 process notes
+
+Two smaller items from later review passes that don't fit the decision-log format
+above: `.gitignore` was added (the editable install was dropping untracked
+`*.egg-info/` and `__pycache__/` as noise in `git status`), and `AGENTS.md` +
+`CLAUDE.md` were added as the agent-facing working guide (see AGENTS.md itself
+for what it covers). Full change lists for every post-v0.5 round are in
+CHANGELOG.md; session/commit attribution is in PROVENANCE.md.
+
+---
+
 ## Provenance of this document
 
 Written by Perplexity Computer (model: claude-sonnet-4-6) in the same session that produced v0.5.0, as part of the "prime-time readiness" review. The session thread is preserved in the project owner's Perplexity history at the canonical thread URL recorded in PROVENANCE.md.
-
----
-
-## Post-handoff maintenance
-
-Changes made after this document was written, during a repo review pass.
-
-### Critical fix — the package did not import
-
-A refactor commit (`e5f02c2`, "6 modularity fixes") added
-`from lsd.models import SkillType` inside `compile_skill_multi()` but mis-indented
-the following line, producing an `IndentationError`. `SkillType` was already
-imported at module scope and unused inside the function, so the whole `lsd`
-package failed to import — every CLI command and the entire test suite were
-broken despite docs claiming a green build. Fix: removed the redundant/malformed
-local import. **Lesson:** run `pytest -q` (or at least `python -m compileall
-src/lsd`) before committing; the suite catches this instantly.
-
-### Stale tests repaired (green: 104 passing)
-
-The same refactor left four test modules out of sync with the code they cover:
-
-- `test_compiler.py` — treated `compile_skill()` as returning a string; it
-  returns `(content, model_id)`. Tests now unpack the tuple.
-- `test_retrieval.py` — imported `estimate_tokens` / `combined_token_estimate`
-  from `retrieval/naive.py`, which the refactor deleted. Those helpers now live
-  in `lsd.utils` (their proper single-source home; the "inlined" version had
-  duplicated the math in `pipeline.py`), and the test imports them from there.
-- `test_pipeline_multi.py` — referenced the removed `Routing` dataclass and
-  patched `lsd.pipeline.*` names the refactor had pushed into function-local
-  imports. `build_multi`'s cross-module deps are now imported at module scope
-  (matching `build()`), and the helper returns the plain 5-tuple `prepare()`
-  actually produces.
-- `test_fetcher.py::test_login_redirect_raises_lsd_error` — registered its
-  `httpx` mock for a different URL than `fetch()` requested; corrected.
-
-### (a) `## Gotchas` section added to the compiler
-
-The LLM compiler pass now emits a fourth grounded section — `## Gotchas` —
-capturing environment-specific facts, API quirks, version/auth/rate-limit
-constraints, and silent-failure modes. Community data flags this as the
-highest-ROI content in a skill. A missing or `"none"` answer renders a neutral
-note rather than a placeholder that looks like a bug (`_gotchas_block`,
-`_parse_optional_section`). Covered by new tests in `test_compiler.py`.
-
-### (b) Semantic-drift similarity — seam, not implementation
-
-The throwaway note about swapping `SequenceMatcher` for embedding cosine
-distance is a *correct but conditional* gap: no embedding API is wired into any
-LSD backend (the LLM backends expose only `complete()`; retrieval is lexical),
-and `scripts/check-drift.py` is intentionally `httpx`-only. Implementing a live
-embedding call would need a provider + key + network and would break the
-standalone drift checker. Instead, the similarity computation is isolated in
-`cli._content_similarity(old_lines, new_lines, similarity_fn=None)` — the single,
-now-tested swap point. Default behaviour is unchanged (lexical). When an
-embeddings endpoint exists, inject an embedding-backed `similarity_fn`; if
-several strategies emerge, graduate it to a `SimilarityBackend` ABC + registry
-like `lsd.retrieval`. New coverage in `test_drift.py`.
-
-### Repo hygiene
-
-Added `.gitignore` (the editable install was dropping untracked `*.egg-info/`
-and `__pycache__/`), `AGENTS.md` (full agent working guide) and `CLAUDE.md`
-(pointer to it).
-
----
-
-## Follow-up pass — LLM-independent gaps (post-merge)
-
-After the above landed on `main`, a second pass closed the remaining gaps that
-don't need a configured LLM or the original eval model. Suite: **116 passing**.
-
-- **Spec validation wired into `build`.** `lsd/validation.py` (`validate_package`)
-  wraps `skills-ref` and `lsd build` now runs it after writing the package,
-  printing a pass/warn panel. Skipped gracefully when `skills-ref` is absent; the
-  dir-name/slug mismatch is a benign hint (build output is a chosen dir; `lsd
-  package` aligns the archive root). Tests: `test_validation.py`.
-- **`lsd eval --init [--force]`.** Builds a case directly into `expected/` to
-  create the baseline; guards against clobbering an existing one. Tests:
-  `test_eval_init.py`.
-- **CI drift-check template** at `examples/ci/drift-check.yml` (+ README). It
-  belongs in a *skill-package* repo, not the LSD tool repo (LSD is not itself a
-  skill package), so it's an example, not an active workflow here.
-- **Bug fixed: the bundled `scripts/check-drift.py` reported drift on every run.**
-  It hashed raw page text instead of the LSD-normalised markdown, so its hash
-  never matched the stored `normalized_hash` (the `lsd check` CLI was fine; the
-  standalone script — the one CI/`uv` users run — was not). It now mirrors
-  `lsd.fetcher` + `lsd.normaliser` exactly and uses the same User-Agent.
-  `test_drift_script_parity.py` fails if the two ever diverge again.
-- **`lsd check --all-sources` was already satisfied** — `_check_package` iterates
-  every `source_dependencies` entry and reports a unified table; no flag needed.
-
-*Recorded by the repo-review pass on the `claude/link-skill-converter-review`
-branch.*

@@ -20,6 +20,9 @@ See [`examples/`](examples/) for filled example packages:
 - [`examples/wikipedia-ai-writing/`](examples/wikipedia-ai-writing/) — text-dominant source
 - [`examples/pixelrag-repo/`](examples/pixelrag-repo/) — hybrid / visually structured source
 
+See [`examples/ci/`](examples/ci/) for a copy-paste GitHub Actions template that runs the
+drift checker on a schedule against a skill-package repo (not the LSD tool repo itself).
+
 ## Status
 
 v0.5.0 — active development. See [`ROADMAP.md`](ROADMAP.md) for the full vision and [`CHANGELOG.md`](CHANGELOG.md) for what's new.
@@ -111,7 +114,9 @@ The following items are structurally unresolvable — they arise from the archit
 
 ## Suggested next steps
 
-These are the most valuable near-term investments, ordered by impact-to-effort ratio.
+This section tracks near-term, actionable items. For architecture-level gaps blocked on an
+external dependency or upstream release (PixelRAG, retrieval backend upgrade, semantic-drift
+embedding similarity), see [`ROADMAP.md` § Open gaps for the next contributor](ROADMAP.md).
 
 ### Recently completed
 
@@ -121,20 +126,18 @@ These are the most valuable near-term investments, ordered by impact-to-effort r
 - **CI drift-check template** — `examples/ci/drift-check.yml` runs the package's bundled drift checker on a schedule and opens/updates a tracking issue on drift.
 - **Fixed the bundled `scripts/check-drift.py`** — it hashed raw page text instead of the LSD-normalised markdown, so it reported drift on every run; it now reproduces LSD's `normalized_hash`. Guarded by `tests/unit/test_drift_script_parity.py`.
 
-### High impact
-
-1. **PixelRAG backend** — When `pixelrag-render` becomes publicly available, wire it into the existing `PixelRAGBackend` adapter. The interface is already in place; only the import and method implementations need to be activated.
-
-2. **Retrieval backend upgrade** — The `NaiveRetrievalBackend` (full-context stuffing with 50K token guard) is functional but basic. When a higher-quality embedding or chunking approach is available, the `RetrievalBackend` ABC makes it a drop-in swap. The swap criteria are documented in ROADMAP.md and SKILL.md.
-
-3. **Semantic-drift similarity** — `lsd check` compares sources with a lexical `SequenceMatcher` ratio, which is blind to *semantic drift* (same words, reorganised meaning). The swap point is isolated in `cli._content_similarity`, which accepts an injectable `similarity_fn`. When a low-latency embeddings endpoint is available, pass an embedding-backed cosine `similarity_fn` there — no other part of the drift path changes. LSD ships no embedding backend today (none of the LLM backends expose embeddings, and the standalone `scripts/check-drift.py` is deliberately `httpx`-only).
-
 > **Note on `lsd check --all-sources`:** already covered — `lsd check <package-dir>` iterates every entry in `metadata.json → source_dependencies` and reports a unified table, so no extra flag is needed.
+
+### Blocked on LLM/model access (not architecture — nothing to build)
+
+1. **Compiler output quality, including `## Gotchas`** — the LLM compiler pass is fully wired, but its output is only as good as the configured model. `LSD_LLM_PROVIDER` defaults to `anthropic` whether or not it's set; the actual fallback trigger is a missing API key for the resolved provider (`ANTHROPIC_API_KEY` for `anthropic`, `LSD_LLM_API_KEY` for `openai-compat`) — without one, every section (including Gotchas) is a heuristic TODO placeholder. See `src/lsd/llm/__init__.py` for all env vars.
+
+2. **Regenerate the eval baseline** — the committed `tests/cases/wikipedia-ai-writing/expected/` snapshot predates the `## Gotchas` section, so `lsd eval` now reports a `DIFFER` on `SKILL.md`. Rebuild it with the original model (Inception dLLM `mercury-2`, per HANDOFF.md) and network access, then run `lsd eval tests/cases/wikipedia-ai-writing --init --force` to commit the refreshed baseline.
 
 ### Longer term (from ROADMAP.md)
 
-4. Hosted web product — drag-and-drop URL input, no CLI required
-5. Marketplace listing support (claude.ai skill store, VS Code Marketplace)
-6. Org skill library integration
-7. Skill composition — build a skill that references other skills as dependencies
-8. Offline mode — embed a local model for the LLM compiler pass
+- Hosted web product — drag-and-drop URL input, no CLI required
+- Marketplace listing support (claude.ai skill store, VS Code Marketplace)
+- Org skill library integration
+- Skill composition — build a skill that references other skills as dependencies
+- Offline mode — embed a local model for the LLM compiler pass

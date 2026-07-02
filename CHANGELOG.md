@@ -7,6 +7,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Docs
+- **Fixed five doc/code mismatches found by auditing docs against the branch**,
+  rather than assuming prior doc edits were accurate: HANDOFF.md's header said
+  "104 tests passing" while the suite has 116 (and the file's own later section
+  already said 116); AGENTS.md's repository-layout tree omitted `validation.py`
+  entirely; AGENTS.md and README.md both said "two filled example packages" for
+  `examples/`, omitting `examples/ci/`; ROADMAP.md undercounted the eval case set
+  (`tests/cases/pixelrag-repo/` exists too, just unbaselined); and PROVENANCE.md —
+  which explicitly instructs contributors to record new work — had no entry for
+  any of the four rounds of doc/code work in this engagement, now added as one
+  dated entry. Also corrected README's stated trigger for heuristic-fallback
+  compiler output (it's a missing API key, not an unset `LSD_LLM_PROVIDER`, which
+  defaults to `anthropic` either way) and a param-name mismatch in ROADMAP's
+  reference to `cli._content_similarity()`.
+- **Clarified the job of each top-level doc and removed the resulting duplication.**
+  `HANDOFF.md`'s "Suggestions for the next contributor" section had gone stale and
+  self-contradicting (it listed `skills-ref validate` and `lsd eval --init` as open
+  suggestions while its own later sections recorded both as shipped). HANDOFF.md is
+  now strictly a decision log; live actionable items live in exactly one place each:
+  README.md § Suggested next steps (near-term / blocked only on LLM access) and
+  ROADMAP.md § Open gaps for the next contributor (blocked on an external dependency,
+  plus unscheduled backlog — eval case expansion, description optimizer, MCP server
+  scaffold, carried over from HANDOFF's old list rather than dropped). Also corrected
+  ROADMAP's stale claim that the v0.4 retrieval default uses embeddings/FAISS — the
+  shipped default (`NaiveRetrievalBackend`) is lexical chunking with a token guard.
+
 ### Fixed
 - **Critical:** `compiler.py` raised `IndentationError` on import (a malformed
   local `SkillType` import from commit `e5f02c2`), which broke the entire `lsd`

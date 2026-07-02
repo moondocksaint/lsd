@@ -5,6 +5,13 @@ and sessions produced each major artifact. It exists so future contributors
 understand where things came from and can interpret `compiler_model` fields
 in generated skill packages correctly.
 
+This file should stay terse and attribution-only (session, commits, one-line
+summary). It should contain *who/when built what*, not *why* (that's
+HANDOFF.md's job) or the full change list (that's CHANGELOG.md's job). If an
+entry here grows past a few lines of rationale or a bulleted change list,
+that content belongs in one of those two files instead, with a pointer left
+here.
+
 ---
 
 ## Repository origin
@@ -102,10 +109,40 @@ was not yet part of the schema.
 - Committed as: `tests/cases/wikipedia-ai-writing/expected/`
 - `compiler_model` in that snapshot: `api/mercury-2`
 
-**Note on `openai_compat.py`:** Inception dLLM only supports `temperature`
-and `stop` sampling parameters — not `max_tokens`. Added `LSD_OMIT_MAX_TOKENS=1`
-env var to handle this. Known Inception model IDs as of 2026-06-30:
-`mercury`, `mercury-2`, `mercury-coder`, `mercury-coder-small`, `mercury-small`.
+**Attribution note on `openai_compat.py`:** the `LSD_OMIT_MAX_TOKENS=1` env var
+was added during this session to handle an Inception dLLM quirk — see HANDOFF.md
+Decision 8 for the rationale. Known Inception model IDs as of 2026-06-30:
+`mercury`, `mercury-2`, `mercury-coder`, `mercury-coder-small`, `mercury-small`
+(reference data for interpreting `compiler_model` values, not a decision record).
+
+---
+
+## Post-v0.5 — Claude Code review pass (branch `claude/link-skill-converter-review-4mpsab`)
+
+**Session:** Claude Code, six rounds within one engagement, 2026-07-02
+**Work done by:** Claude Code agent, working directly in the repo (read/edit/bash
+tools), not the bash+GitHub-API push pattern used in the sessions above.
+
+There is no v0.5 entry above this one — v0.5.0 (per HANDOFF.md's own provenance
+note) was built by a separate Perplexity Computer session not recorded in this
+file. This entry does not attempt to backfill that gap; it covers only the work
+below, and deliberately stays terse — attribution only, not rationale or a full
+change list. For *why*, see HANDOFF.md "Decisions since v0.5.0" (19–23) and the
+bugs table (Bugs 4–5). For the full change list, see CHANGELOG.md `[Unreleased]`.
+
+| Round | Commit | Suite | One-line summary |
+|-------|--------|-------|-------------------|
+| 1 | `29a1446` | 90 → 104 | Fixed Bug 4 (package unimportable); Decisions 19–20 (Gotchas, drift-similarity seam) |
+| 2 | `3e69410` | 104 → 116 | Decisions 21–23 (spec validation, `eval --init`, CI template); fixed Bug 5 |
+| 3 | `16ef089` | 116 (unchanged) | Cleared all `ruff` + `mypy --strict` findings; no behaviour change |
+| 4 | `8afb8a3` | 116 (unchanged) | HANDOFF/ROADMAP/README role clarification (first pass) |
+| 5 | `10ff6b9` | 116 (unchanged) | Verified rounds 1–4's doc claims against the code; fixed 5 mismatches |
+| 6 | *(this entry's commit)* | 116 (unchanged) | Trimmed this file and HANDOFF.md's duplication of each other; converted HANDOFF's narrative maintenance sections into Decisions 19–23 and bug-table rows |
+
+No new eval baseline was generated in any of these rounds — no LLM provider
+was configured in the working environment. The `mercury-2` baseline from v0.4
+remains the committed baseline, though it now predates the `## Gotchas`
+section (see README.md § Suggested next steps for the regeneration steps).
 
 ---
 
