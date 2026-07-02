@@ -321,5 +321,32 @@ Added `.gitignore` (the editable install was dropping untracked `*.egg-info/`
 and `__pycache__/`), `AGENTS.md` (full agent working guide) and `CLAUDE.md`
 (pointer to it).
 
+---
+
+## Follow-up pass — LLM-independent gaps (post-merge)
+
+After the above landed on `main`, a second pass closed the remaining gaps that
+don't need a configured LLM or the original eval model. Suite: **116 passing**.
+
+- **Spec validation wired into `build`.** `lsd/validation.py` (`validate_package`)
+  wraps `skills-ref` and `lsd build` now runs it after writing the package,
+  printing a pass/warn panel. Skipped gracefully when `skills-ref` is absent; the
+  dir-name/slug mismatch is a benign hint (build output is a chosen dir; `lsd
+  package` aligns the archive root). Tests: `test_validation.py`.
+- **`lsd eval --init [--force]`.** Builds a case directly into `expected/` to
+  create the baseline; guards against clobbering an existing one. Tests:
+  `test_eval_init.py`.
+- **CI drift-check template** at `examples/ci/drift-check.yml` (+ README). It
+  belongs in a *skill-package* repo, not the LSD tool repo (LSD is not itself a
+  skill package), so it's an example, not an active workflow here.
+- **Bug fixed: the bundled `scripts/check-drift.py` reported drift on every run.**
+  It hashed raw page text instead of the LSD-normalised markdown, so its hash
+  never matched the stored `normalized_hash` (the `lsd check` CLI was fine; the
+  standalone script — the one CI/`uv` users run — was not). It now mirrors
+  `lsd.fetcher` + `lsd.normaliser` exactly and uses the same User-Agent.
+  `test_drift_script_parity.py` fails if the two ever diverge again.
+- **`lsd check --all-sources` was already satisfied** — `_check_package` iterates
+  every `source_dependencies` entry and reports a unified table; no flag needed.
+
 *Recorded by the repo-review pass on the `claude/link-skill-converter-review`
 branch.*

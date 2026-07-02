@@ -69,11 +69,12 @@ pytest tests/unit/test_compiler.py # a single module
 ruff check src tests               # lint
 mypy src                           # types (pyproject sets strict = true)
 
-lsd build <url> [-o DIR] [--mode …] [--license …]   # single source
+lsd build <url> [-o DIR] [--mode …] [--license …]   # single source; runs spec validation
 lsd build <url1> <url2> … [-o DIR]                  # multi-source
-lsd check <package-dir-or-url>                       # drift detection
+lsd check <package-dir-or-url>                       # drift detection (all sources in a package)
 lsd package <package-dir> --zip                      # validate + zip for install
 lsd eval tests/cases/wikipedia-ai-writing            # re-run + score vs expected/
+lsd eval <case-dir> --init [--force]                 # build straight into expected/ to create the baseline
 ```
 
 **Before committing any change to product source, run `pytest -q`.** A prior
@@ -122,14 +123,22 @@ not free, so let the suite catch it.
   `openai-compat`), `LSD_MODEL`, plus keys/base-url. No provider → heuristic
   fallback (TODO placeholders). `LSD_OMIT_MAX_TOKENS=1` for providers that reject
   `max_tokens` (e.g. Inception dLLM).
-- **`skills-ref` is a Python API, not a CLI here.** Validate with
-  `skills_ref.validate(Path(package_dir))` → list of error strings (empty = OK);
-  the directory-name/`name` check only passes when the dir is named after the
-  skill. It is a dev/optional dependency and is not run automatically by `build`.
+- **`skills-ref` is a Python API, not a CLI here.** `lsd.validation.validate_package`
+  wraps `skills_ref.validate(Path(package_dir))` → list of error strings; `build`
+  runs it after writing and surfaces problems (`cli._print_validation`). It is a
+  dev/optional dependency, so validation degrades to "skipped" when absent. The
+  directory-name/`name`-slug mismatch is treated as a benign hint (build output
+  goes to a user-chosen dir; `lsd package` aligns the archive root).
 - **Files under `src/lsd/scripts/` are hyphenated and NOT importable modules.**
   They are canonical script bodies copied verbatim into each package's
   `scripts/` by `writer._copy_scripts`. Edit them there; don't try to `import`
   them.
+- **`scripts/check-drift.py` must mirror `lsd.fetcher` + `lsd.normaliser` exactly.**
+  It recomputes the stored `normalized_hash` with no `lsd` install (it runs via
+  `uv` in CI), so its `extract_title`/`extract_text`/`clean`/`normalise`/
+  `content_hash` are faithful ports. If you change extraction or normalisation in
+  `lsd`, update the script too — `tests/unit/test_drift_script_parity.py` fails
+  on divergence. (This is the bug that made the script report drift on every run.)
 - **Unit tests never hit the network.** `test_fetcher.py` uses `pytest-httpx`;
   mock URLs must match exactly what the code requests. `test_pipeline_multi.py`
   patches `lsd.pipeline.*` names, so cross-module deps used by `build_multi` are
@@ -137,8 +146,11 @@ not free, so let the suite catch it.
 
 ## Where the real gaps are (see README "Suggested next steps" for detail)
 
-Working today: the full build/check/package/eval flow, spec-valid output,
-multi-source with conflict detection, drift detection. Known limitations:
-heuristic compiler output until an LLM provider is configured; `skills-ref
-validate` is not auto-run in `build`; `NaiveRetrievalBackend` is lexical;
-PixelRAG visual backend is a stub pending upstream release.
+Working today: the full build/check/package/eval flow, spec validation wired
+into `build`, `lsd eval --init` for baselines, a CI drift-check template
+(`examples/ci/`), spec-valid output, multi-source with conflict detection, and a
+drift checker whose standalone script now matches `lsd check`. Remaining
+limitations: heuristic compiler output (incl. Gotchas) until an LLM provider is
+configured; `NaiveRetrievalBackend` is lexical; PixelRAG visual backend is a
+stub pending upstream release; drift similarity is lexical (semantic-drift swap
+seam exists but no embedding backend ships).

@@ -40,6 +40,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (matching `build()`); there was no circular-import reason for them to be
   function-local, and it restores the natural `lsd.pipeline.*` patch targets.
 
+### Added (maintenance follow-up — LLM-independent gaps)
+- **`skills-ref` spec validation wired into `lsd build`.** New `lsd/validation.py`
+  (`validate_package`) wraps the reference validator; `build` runs it after
+  writing and prints a pass/warn panel via `cli._print_validation`. Degrades to
+  "spec check skipped" when `skills-ref` isn't installed; the directory-name/slug
+  mismatch is treated as a benign hint (resolved by `lsd package`).
+- **`lsd eval --init [--force]`.** Builds a case straight into `expected/` to
+  create the eval baseline; refuses to clobber an existing baseline without
+  `--force` (which clears stale files first).
+- **`examples/ci/drift-check.yml`** — a copy-paste GitHub Actions template for a
+  skill-package repo that runs the bundled drift checker on a schedule and
+  opens/updates a `source-drift` issue on change. Plus `examples/ci/README.md`.
+
+### Fixed (maintenance follow-up)
+- **Bundled `scripts/check-drift.py` reported drift on every run.** It hashed the
+  raw `soup.get_text()` body instead of the LSD-normalised markdown, so its hash
+  never matched the stored `normalized_hash`. It now faithfully mirrors
+  `lsd.fetcher` + `lsd.normaliser` (extraction → normalise → hash) and uses the
+  same User-Agent. Guarded by `tests/unit/test_drift_script_parity.py`.
+- New tests: `test_validation.py`, `test_eval_init.py`, `test_drift_script_parity.py`
+  (116 passing).
+
 ---
 
 ## [0.4.0] — 2026-06-30
