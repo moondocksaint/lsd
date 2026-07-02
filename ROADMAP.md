@@ -355,6 +355,56 @@ records the rationale behind past decisions.
 
 ---
 
+## Execution plan (sequenced)
+
+The order in which to work the gaps above and in README.md § Suggested next steps.
+Phases are ordered by leverage and dependency — earlier phases unblock later ones. This
+section only *sequences* the work; the detailed descriptions live in § Open gaps and
+README § Suggested next steps, and are referenced by name here rather than repeated.
+
+### Phase 0 — Reconciliation ✅ done
+
+Docs reconciled with code; `main` is the single source of truth. The historical
+divergence (a broken commit that reached `main` while docs claimed a green suite) is
+what the CI gate in Phase 1 exists to prevent.
+
+### Phase 1 — Guardrail + quality unlock (highest ROI, minimal code)
+
+1. **CI gate ✅ shipped with this plan** — `.github/workflows/ci.yml` runs `ruff check`,
+   `mypy --strict`, and `pytest -q` on every push to `main` and every PR. Nothing that
+   fails the green gate can reach `main` again. *No external blocker.*
+2. **Configure an LLM provider** — set `ANTHROPIC_API_KEY`, or point
+   `LSD_LLM_PROVIDER=openai-compat` at an endpoint (env vars in `src/lsd/llm/__init__.py`).
+   Converts the heuristic `<!-- TODO -->` compiler output — including `## Gotchas` — into
+   real content. This gates all output quality. *Blocked only on a key.*
+3. **Regenerate eval baselines** once (2) is set — the committed
+   `tests/cases/wikipedia-ai-writing/expected/` snapshot predates `## Gotchas` and now
+   reports `DIFFER`; rebuild it with the recorded model via `lsd eval … --init --force`,
+   then baseline `tests/cases/pixelrag-repo/` (needs fetch access to the source URL).
+
+### Phase 2 — Improve the reconciled codebase (no external blocker)
+
+4. **Description optimizer** (§ Backlog).
+5. **MCP server scaffold** (§ Backlog).
+6. **Expand the eval case set** (§ Backlog) using a *stable, fetchable* source — avoid
+   live pages whose content drifts and makes a committed baseline flaky.
+
+### Phase 3 — Dependency-blocked seams (do when an embeddings endpoint exists)
+
+7. **Retrieval backend upgrade** (§ Open gaps) — implement an embedding/BM25/ColBERT
+   `RetrievalBackend` behind the existing ABC; promote per the swap-candidate criteria.
+8. **Semantic-drift similarity** (§ Open gaps) — inject an embedding-backed cosine
+   `similarity_fn` into `cli._content_similarity`; keep `scripts/check-drift.py` httpx-only.
+9. **PixelRAG visual backend** (§ Open gaps) — activate when `pixelrag-render` ships.
+
+### Phase 4 — Distribution surfaces (largest)
+
+10. Meta-skill marketplace submission; web product (a FastAPI wrapper around
+    `pipeline.build()` — the pipeline is already the single source of truth); Cursor/Codex
+    actions. See § v0.5 — Distribution surfaces and § Larger vision.
+
+---
+
 ## What is deliberately out of scope
 
 - **Video / audio sources**: transcription is a different problem; defer indefinitely

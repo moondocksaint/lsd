@@ -7,7 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **CI green gate** (`.github/workflows/ci.yml`) — runs `ruff check`, `mypy --strict`,
+  and `pytest -q` on every push to `main` and every pull request, so a commit that
+  fails the suite can no longer reach `main` while docs claim it is green.
+
 ### Docs
+- **Folded a sequenced execution plan into `ROADMAP.md` § Execution plan** — phases the
+  remaining work (CI guardrail → LLM provider + baseline regen → no-blocker backlog →
+  embeddings-dependent seams → distribution surfaces) by leverage and dependency,
+  cross-referencing § Open gaps and README § Suggested next steps rather than duplicating
+  them.
+
+### Docs (reconciliation)
 - **Fixed five doc/code mismatches found by auditing docs against the branch**,
   rather than assuming prior doc edits were accurate: HANDOFF.md's header said
   "104 tests passing" while the suite has 116 (and the file's own later section
