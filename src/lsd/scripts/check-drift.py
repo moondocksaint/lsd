@@ -35,6 +35,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 try:
     import httpx
@@ -212,7 +213,7 @@ def main() -> int:
     )
 
     # Collect source dependencies — single or multi
-    deps: list[dict] = []
+    deps: list[dict[str, Any]] = []
     if "source_dependency" in meta:
         deps = [meta["source_dependency"]]
     elif "source_dependencies" in meta:

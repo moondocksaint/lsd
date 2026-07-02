@@ -66,8 +66,11 @@ python -m pip install -e '.[dev]'
 
 pytest -q                          # full unit suite (no network; httpx is mocked)
 pytest tests/unit/test_compiler.py # a single module
-ruff check src tests               # lint
-mypy src                           # types (pyproject sets strict = true)
+ruff check src tests               # lint — clean
+python -m mypy src                 # types — clean under strict (pyproject sets strict = true)
+                                   # use `python -m mypy`, not a bare `mypy`, so it
+                                   # resolves deps from THIS environment (a global mypy
+                                   # without the deps installed reports false import errors)
 
 lsd build <url> [-o DIR] [--mode …] [--license …]   # single source; runs spec validation
 lsd build <url1> <url2> … [-o DIR]                  # multi-source

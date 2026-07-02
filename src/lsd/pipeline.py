@@ -67,7 +67,7 @@ def build(
     url: str,
     output_dir: Path,
     mode_override: IngestionMode | None = None,
-    routing: tuple | None = None,
+    routing: tuple[FetchResult, SourceFit, IngestionBackend | None, IngestionMode, str] | None = None,
     skill_license: str | None = None,
 ) -> Path:
     if routing is None:

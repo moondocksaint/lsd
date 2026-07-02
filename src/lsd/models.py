@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 
 SourceType = Literal["html", "pdf", "image", "google_doc", "social", "gated", "unsupported"]
@@ -293,4 +293,4 @@ class RetrievalIndex:
     source_count: int
     total_chars: int
     was_truncated: bool = False      # set True if any retrieve() call hit the budget
-    _state: object = field(default=None, repr=False)  # backend-specific state
+    _state: Any = field(default=None, repr=False)  # backend-specific state (opaque)

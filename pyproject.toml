@@ -53,3 +53,10 @@ target-version = "py311"
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+# Optional dependencies without type information:
+#   pixelrag_render — not yet publicly released (the visual backend is a stub)
+#   skills_ref      — installed for validation but ships no py.typed marker
+[[tool.mypy.overrides]]
+module = ["pixelrag_render", "skills_ref"]
+ignore_missing_imports = true

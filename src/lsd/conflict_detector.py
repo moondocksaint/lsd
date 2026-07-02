@@ -140,9 +140,12 @@ def detect_conflicts(sources: list[SourceEntry]) -> ConflictReport:
         summary = f"No significant conflicts detected across {len(sources)} sources."
     else:
         parts: list[str] = []
-        if n_high: parts.append(f"{n_high} contradiction(s)")
-        if n_medium: parts.append(f"{n_medium} gap(s)")
-        if n_low: parts.append(f"{n_low} overlap(s)")
+        if n_high:
+            parts.append(f"{n_high} contradiction(s)")
+        if n_medium:
+            parts.append(f"{n_medium} gap(s)")
+        if n_low:
+            parts.append(f"{n_low} overlap(s)")
         summary = "Detected: " + ", ".join(parts) + f" across {len(sources)} sources."
 
     return ConflictReport(

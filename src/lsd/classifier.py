@@ -9,8 +9,11 @@ Future: replace or supplement with an LLM call for higher accuracy.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from lsd.models import FetchResult, SourceFit
+
+_Level = Literal["high", "medium", "low"]
 
 # --- Signal word lists ---
 
@@ -57,9 +60,9 @@ def classify(fetch: FetchResult) -> SourceFit:
     rule_density = _bucket(rule_score / word_count * 1000)
     procedure_density = _bucket(proc_score / word_count * 1000)
     example_density = _bucket(example_score / word_count * 1000)
-    stability = "low" if stability_risk > 5 else "medium" if stability_risk > 2 else "high"
-    specificity = "high" if word_count > 1000 and rule_score + proc_score > 10 else "medium"
-    composability = "high" if proc_score > 8 or visual_score > 5 else "medium"
+    stability: _Level = "low" if stability_risk > 5 else "medium" if stability_risk > 2 else "high"
+    specificity: _Level = "high" if word_count > 1000 and rule_score + proc_score > 10 else "medium"
+    composability: _Level = "high" if proc_score > 8 or visual_score > 5 else "medium"
 
     # Overall fit: high if at least two dimensions are high
     highs = sum([
@@ -67,7 +70,7 @@ def classify(fetch: FetchResult) -> SourceFit:
         procedure_density == "high",
         example_density == "high",
     ])
-    overall_fit = "high" if highs >= 2 else "medium" if highs >= 1 else "low"
+    overall_fit: _Level = "high" if highs >= 2 else "medium" if highs >= 1 else "low"
 
     fit_notes = _build_notes(rule_density, procedure_density, example_density, visual_score)
 
@@ -87,7 +90,7 @@ def _score(text: str, patterns: list[str]) -> int:
     return sum(len(re.findall(p, text)) for p in patterns)
 
 
-def _bucket(rate: float) -> str:
+def _bucket(rate: float) -> _Level:
     if rate > 3:
         return "high"
     if rate > 1:

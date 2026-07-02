@@ -77,7 +77,7 @@ def main() -> int:
     if recorded_at:
         print(f"  Recorded:    {recorded_at}")
     if socratic_notes:
-        print(f"\n  Open questions from build session:")
+        print("\n  Open questions from build session:")
         print(f"  {socratic_notes}")
 
     print()

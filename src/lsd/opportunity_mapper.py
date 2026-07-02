@@ -28,6 +28,7 @@ Swap-candidate criteria:
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from lsd.router import APP_DOMAINS
 from lsd.models import (
@@ -275,6 +276,9 @@ def map_opportunities(fit: SourceFit, url: str) -> OpportunityMap:
 
     high_now = [c for c in candidates if c.confidence == "high" and c.build_timing == "now"]
 
+    action: Literal["build_one_skill", "build_multiple_skills", "build_with_caveats", "defer"]
+    verdict: Literal["good", "partial", "poor", "tool_problem"]
+
     # Defer: genuinely unsuitable (marketing, no content signal, app-only with no fit)
     if is_marketing and fit.overall_fit == "low":
         action = "defer"
@@ -330,7 +334,7 @@ def map_opportunities(fit: SourceFit, url: str) -> OpportunityMap:
         assessment_summary = "No strong skill signals found. Consider a different source."
 
     assessment = SourceAssessment(
-        skill_fit_verdict=verdict,  # type: ignore[arg-type]
+        skill_fit_verdict=verdict,
         summary=assessment_summary,
         limitations=limitations,
         better_alternatives=better_alternatives,
@@ -368,7 +372,7 @@ def map_opportunities_multi(sources: list[SourceEntry]) -> OpportunityMap:
     all_alternatives: list[str] = []
     all_stability_warnings: list[str] = []
     verdict_priority = {"tool_problem": 0, "poor": 1, "partial": 2, "good": 3}
-    worst_verdict = "good"
+    worst_verdict: Literal["good", "partial", "poor", "tool_problem"] = "good"
 
     for entry in sources:
         per_source = entry.opportunity_map or map_opportunities(entry.fit, entry.url)
@@ -395,6 +399,7 @@ def map_opportunities_multi(sources: list[SourceEntry]) -> OpportunityMap:
 
     high_now = [c for c in all_candidates if c.confidence == "high" and c.build_timing == "now"]
 
+    action: Literal["build_one_skill", "build_multiple_skills", "build_with_caveats", "defer"]
     if not all_candidates:
         action = "defer"
         recommended_type = "none"
@@ -418,7 +423,7 @@ def map_opportunities_multi(sources: list[SourceEntry]) -> OpportunityMap:
     )
 
     assessment = SourceAssessment(
-        skill_fit_verdict=worst_verdict,  # type: ignore[arg-type]
+        skill_fit_verdict=worst_verdict,
         summary=combined_summary,
         limitations=all_limitations,
         better_alternatives=list(dict.fromkeys(all_alternatives)),  # deduplicate, preserve order

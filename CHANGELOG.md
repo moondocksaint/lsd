@@ -53,6 +53,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   skill-package repo that runs the bundled drift checker on a schedule and
   opens/updates a `source-drift` issue on change. Plus `examples/ci/README.md`.
 
+### Changed (type/lint cleanup)
+- **`ruff check` and `python -m mypy src` (strict) are now clean.** Addressed the
+  pre-existing debt with type-only / style-only changes: `Literal` narrowing in
+  `classifier.py` and `opportunity_mapper.py` (dropping two `# type: ignore`s),
+  generic type parameters (`dict[str, Any]`, `list[...]`, the `routing` tuple),
+  missing annotations on internal helpers, `TextBlock` narrowing in the Anthropic
+  backend, `RetrievalIndex._state: Any`, reformatted compact `if …: return`
+  lines, and removed unused test imports. No behaviour change. `pyproject.toml`
+  gains mypy overrides for the two stub-less optional deps (`pixelrag_render`,
+  `skills_ref`). Run mypy as `python -m mypy src` so it uses the project env.
+
 ### Fixed (maintenance follow-up)
 - **Bundled `scripts/check-drift.py` reported drift on every run.** It hashed the
   raw `soup.get_text()` body instead of the LSD-normalised markdown, so its hash

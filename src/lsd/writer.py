@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from lsd import __version__ as lsd_version
 from lsd.compiler import compile_skill, compile_skill_multi
-from lsd.models import BuildContext, MultiSourceBuildContext
+from lsd.models import BuildContext, MultiSourceBuildContext, OpportunityMap, SourceFit
 from lsd.normaliser import content_hash, normalise
 
 _SCRIPTS_DIR = Path(__file__).parent / "scripts"
@@ -444,7 +445,7 @@ def _build_metadata(
     norm_hash: str,
     generated_at: str,
     compiler_model: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     fetch = ctx.ingestion.fetch
     mode = ctx.ingestion.mode
     fit = ctx.source_fit
@@ -455,7 +456,7 @@ def _build_metadata(
         visual_artifacts = ["visual/rendered-page.png", "visual/tiles/"]
 
     # Assessment block — included when populated
-    assessment_block: dict = {}
+    assessment_block: dict[str, Any] = {}
     if opp.assessment:
         assessment_block = {
             "verdict": opp.assessment.skill_fit_verdict,
@@ -559,14 +560,14 @@ def _build_metadata_multi(
     ctx: MultiSourceBuildContext,
     generated_at: str,
     compiler_model: str | None,
-) -> dict:
+) -> dict[str, Any]:
     """Build metadata.json for a multi-source package. compiler_model is now populated."""
     opp = ctx.combined_opportunities
     estimated_tokens = getattr(ctx, "estimated_tokens", 0)
     ret_index = getattr(ctx, "_retrieval_index", None)
     was_truncated = getattr(ret_index, "was_truncated", False) if ret_index else False
 
-    assessment_block: dict = {}
+    assessment_block: dict[str, Any] = {}
     if opp.assessment:
         assessment_block = {
             "verdict": opp.assessment.skill_fit_verdict,
@@ -638,7 +639,7 @@ def _build_metadata_multi(
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _text_confidence(fit) -> str:
+def _text_confidence(fit: SourceFit) -> str:
     if fit.rule_density == "high" and fit.example_density == "high":
         return "high"
     if fit.rule_density == "low" and fit.procedure_density == "low":
@@ -683,7 +684,7 @@ def _source_policy(url: str, mode: str) -> str:
 """
 
 
-def _opportunities_md(opp) -> str:
+def _opportunities_md(opp: OpportunityMap) -> str:
     lines = ["# Skill Opportunity Map", ""]
     lines.append(f"## Recommended action: {opp.recommended_action}")
     lines.append(f"## Recommended skill type: {opp.recommended_skill_type}")

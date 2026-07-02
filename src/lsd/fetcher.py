@@ -77,13 +77,19 @@ def _detect_source_type(url: str, canonical_url: str, content_type: str) -> Sour
     parsed = urlparse(url.lower())
     host = parsed.hostname or ""
     path = parsed.path
-    if content_type.startswith("video/"): return "unsupported"
-    if content_type.startswith("application/pdf") or path.endswith(".pdf"): return "pdf"
-    if content_type.startswith("image/"): return "image"
+    if content_type.startswith("video/"):
+        return "unsupported"
+    if content_type.startswith("application/pdf") or path.endswith(".pdf"):
+        return "pdf"
+    if content_type.startswith("image/"):
+        return "image"
     ext = "." + path.rsplit(".", 1)[-1] if "." in path else ""
-    if ext in _IMAGE_EXTS: return "image"
-    if host in ("docs.google.com", "slides.google.com", "sheets.google.com"): return "google_doc"
-    if "linkedin.com" in host: return "social"
+    if ext in _IMAGE_EXTS:
+        return "image"
+    if host in ("docs.google.com", "slides.google.com", "sheets.google.com"):
+        return "google_doc"
+    if "linkedin.com" in host:
+        return "social"
     return "html"
 
 
@@ -105,7 +111,8 @@ def _check_gated(original_url: str, canonical_url: str, status_code: int) -> Non
     final_path = urlparse(canonical_url).path.lower()
     final_host = urlparse(canonical_url).hostname or ""
     orig_host = urlparse(original_url).hostname or ""
-    if final_host != orig_host: return
+    if final_host != orig_host:
+        return
     if any(signal in final_path for signal in _LOGIN_SIGNALS):
         raise LSDError(
             "Source redirected to a login page. "
@@ -131,9 +138,11 @@ def _title_from_url(url: str) -> str:
 
 def _extract_title(soup: BeautifulSoup) -> str:
     tag = soup.find("title")
-    if tag: return tag.get_text(strip=True)
+    if tag:
+        return tag.get_text(strip=True)
     h1 = soup.find("h1")
-    if h1: return h1.get_text(strip=True)
+    if h1:
+        return h1.get_text(strip=True)
     return "Untitled"
 
 

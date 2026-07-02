@@ -16,7 +16,7 @@ import re
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import click
 from rich.console import Console
@@ -29,7 +29,7 @@ from lsd.utils import slugify
 from lsd.backends import get_visual_backend
 from lsd.classifier import classify
 from lsd.fetcher import fetch
-from lsd.models import IngestionMode
+from lsd.models import IngestionMode, OpportunityMap
 from lsd.pipeline import build, build_multi, prepare
 from lsd.router import route
 from lsd.validation import validate_package
@@ -270,7 +270,7 @@ def build_cmd(
 # Post-build verdict helpers
 # ---------------------------------------------------------------------------
 
-def _print_verdict(opp) -> None:
+def _print_verdict(opp: OpportunityMap) -> None:
     """Print the post-build verdict panel from an OpportunityMap object."""
     action = opp.recommended_action
     assessment = opp.assessment
@@ -313,7 +313,7 @@ def _print_verdict_from_package(package_dir: Path) -> None:
 
     # Reconstruct minimal tool candidate objects for display
     class _TC:
-        def __init__(self, d: dict):
+        def __init__(self, d: dict[str, Any]):
             self.type = d.get("type", "")
             self.confidence = d.get("confidence", "")
             self.why_fit = d.get("why_fit", "")
@@ -336,8 +336,8 @@ def _print_verdict_from_package(package_dir: Path) -> None:
 def _render_verdict_panel(
     action: str,
     summary: str,
-    limitations: list,
-    tool_candidates: list,
+    limitations: list[str],
+    tool_candidates: list[Any],
     stability_warning: str,
     breadth_warning: str,
 ) -> None:
@@ -1029,7 +1029,7 @@ def eval_cmd(
 
 def _init_baseline(
     url: str,
-    mode_override: Optional[str],
+    mode_override: IngestionMode | None,
     exp_dir: Path,
     output: Optional[str],
     force: bool,
@@ -1149,7 +1149,9 @@ def _print_validation(package_dir: Path) -> None:
         )
 
 
-def _score_package(package_dir: Path, expected_dir: Path | None) -> tuple[int, int, list]:
+def _score_package(
+    package_dir: Path, expected_dir: Path | None
+) -> tuple[int, int, list[tuple[str, int, str]]]:
     """Score a package directory against the rubric. Returns (score, max, details)."""
     details: list[tuple[str, int, str]] = []
 
