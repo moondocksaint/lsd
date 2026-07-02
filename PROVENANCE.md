@@ -153,6 +153,18 @@ work below.
 - Corrected a stale ROADMAP.md claim that the v0.4 retrieval default uses
   embeddings/FAISS — the shipped default, `NaiveRetrievalBackend`, is lexical.
 
+**Round 5 — `10ff6b9` + follow-up: verify doc claims against the actual codebase**
+- Audited every claim introduced in rounds 1–4 directly against the code
+  (grep, `python -m pytest`/`mypy`/`ruff`, and clean `git worktree` checkouts
+  of `29a1446`/`3e69410` to confirm the 104/116 test-count claims above
+  weren't guessed). Found and fixed: a stale test count in HANDOFF.md's header,
+  a missing `validation.py` entry in AGENTS.md's file map, `examples/` docs
+  omitting `examples/ci/`, an eval-case-count undercount in ROADMAP.md, an
+  imprecise fallback-trigger claim in README.md (the gate is a missing API
+  key, not an unset `LSD_LLM_PROVIDER`, which defaults to `anthropic`
+  regardless), and a param-name mismatch in ROADMAP.md's reference to
+  `cli._content_similarity()`.
+
 No new eval baseline was generated in any of these rounds — no LLM provider
 was configured in the working environment. The `mercury-2` baseline from v0.4
 remains the committed baseline, though it now predates the `## Gotchas`

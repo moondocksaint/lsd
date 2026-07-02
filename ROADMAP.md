@@ -330,7 +330,7 @@ records the rationale behind past decisions.
   once one is available and clears the swap-candidate criteria above.
 - **Semantic-drift embedding similarity** — `lsd check` classifies drift with a lexical
   `difflib.SequenceMatcher` ratio, which is blind to *semantic drift* (same words,
-  reorganised meaning). The swap point is `cli._content_similarity(old, new,
+  reorganised meaning). The swap point is `cli._content_similarity(old_lines, new_lines,
   similarity_fn=None)`: pass an embedding-backed cosine `similarity_fn` once a low-latency
   embeddings endpoint is available — nothing else in the drift path changes. No embedding
   API is wired into any LSD backend today (the LLM backends are chat-only; retrieval is
