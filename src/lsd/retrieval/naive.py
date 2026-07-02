@@ -7,6 +7,9 @@ rather than silently discarding chunks.
 Ponytail fix: estimate_tokens() and combined_token_estimate() removed —
 both were one-liners with a single caller (pipeline.py). Inlined there.
 
+Pre-release fix: _CHARS_PER_TOKEN moved to lsd.utils (was duplicated here
+and in pipeline.py).
+
 Swap-candidate criteria: replace when any alternative scores >15% better
 on grounding accuracy across the standard eval case set. First candidates:
 BM25 (sparse keyword, no GPU, good for structured docs) or a dense
@@ -19,10 +22,10 @@ import logging
 
 from lsd.models import IndexedSource, Passage, RetrievalIndex
 from lsd.retrieval.base import RetrievalBackend
+from lsd.utils import CHARS_PER_TOKEN
 
 log = logging.getLogger(__name__)
 
-_CHARS_PER_TOKEN = 3.5
 _DEFAULT_CHUNK_CHARS = 1_200
 DEFAULT_TOKEN_THRESHOLD = 50_000
 
@@ -43,7 +46,7 @@ class NaiveRetrievalBackend(RetrievalBackend):
     def index(self, sources: list[IndexedSource]) -> RetrievalIndex:
         chunks: list[Passage] = []
         total_chars = sum(len(s.text) for s in sources)
-        estimated_tokens = total_chars / _CHARS_PER_TOKEN
+        estimated_tokens = total_chars / CHARS_PER_TOKEN
         if estimated_tokens > self._token_threshold:
             log.warning(
                 "Combined sources are ~%d estimated tokens (threshold: %d). "
@@ -75,7 +78,7 @@ class NaiveRetrievalBackend(RetrievalBackend):
         state = index._state
         chunks: list[Passage] = state["chunks"]
         token_threshold: int = state["token_threshold"]
-        budget_chars = int(token_threshold * _CHARS_PER_TOKEN)
+        budget_chars = int(token_threshold * CHARS_PER_TOKEN)
         selected: list[Passage] = []
         used_chars = 0
         for chunk in chunks:

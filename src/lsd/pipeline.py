@@ -8,6 +8,9 @@ Ponytail fixes:
   - estimate_tokens / combined_token_estimate inlined: both were one-liners
     that didn't justify named functions in retrieval/naive.py.
   - NaiveRetrievalBackend truncation flag is propagated via RetrievalIndex.was_truncated.
+
+Pre-release fix:
+  - _CHARS_PER_TOKEN moved to lsd.utils (was duplicated here and in retrieval/naive.py).
 """
 
 from __future__ import annotations
@@ -30,12 +33,12 @@ from lsd.models import (
 )
 from lsd.opportunity_mapper import map_opportunities
 from lsd.router import route
+from lsd.utils import CHARS_PER_TOKEN
 from lsd.writer import write_package
 
 log = logging.getLogger(__name__)
 
 DEFAULT_TOKEN_THRESHOLD = 50_000
-_CHARS_PER_TOKEN = 3.5
 
 
 def prepare(
@@ -75,7 +78,7 @@ def build(
     )
 
     opportunity_map = map_opportunities(source_fit, fetch_result.canonical_url)
-    estimated_tokens = int(len(fetch_result.text) / _CHARS_PER_TOKEN)
+    estimated_tokens = int(len(fetch_result.text) / CHARS_PER_TOKEN)
 
     ctx = BuildContext(
         ingestion=ingestion,
@@ -137,7 +140,7 @@ def build_multi(
     ]
 
     # ponytail: inlined from retrieval/naive.py — both were int(len/3.5) one-liners
-    estimated_tokens = int(sum(len(s.text) for s in indexed) / _CHARS_PER_TOKEN)
+    estimated_tokens = int(sum(len(s.text) for s in indexed) / CHARS_PER_TOKEN)
     if estimated_tokens > token_threshold:
         log.warning(
             "Combined sources are ~%d estimated tokens (threshold: %d). "
