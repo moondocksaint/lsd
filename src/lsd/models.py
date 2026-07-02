@@ -78,14 +78,64 @@ class SkillCandidate:
 
 
 @dataclass
+class ToolCandidate:
+    """A tool (non-skill) opportunity detected from the source.
+
+    Captures cases where the source describes capabilities that require
+    live execution — API calls, data fetches, stateful operations — that
+    a static skill cannot provide. Used in honest assessment output.
+
+    Tool types:
+      mcp_server    — Model Context Protocol server; exposes tools to agents
+      function_tool — OpenAI/Anthropic function/tool definition
+      api_wrapper   — Thin HTTP client the agent can call via bash/code
+      data_pipeline — ETL or batch process, not suitable for skill encoding
+    """
+    tool_type: Literal["mcp_server", "function_tool", "api_wrapper", "data_pipeline"]
+    description: str                # one sentence: what the tool would do
+    why_not_skill: str              # why a skill is insufficient
+    effort: Literal["low", "medium", "high"]   # relative build effort
+    reference_url: str = ""        # relevant SDK/framework docs
+
+
+@dataclass
+class SourceAssessment:
+    """Honest assessment of a source's suitability for skill-building.
+
+    Produced by the opportunity mapper and threaded through to every
+    generated artifact: SKILL.md caveats, extraction-report.md Limitations
+    section, and the CLI post-build verdict.
+
+    Limitations list: each entry is one actionable sentence describing
+    a specific constraint the agent using the skill will encounter.
+
+    Better_alternatives list: each entry describes something the user
+    could do instead of (or in addition to) building a skill.
+    """
+    skill_fit_verdict: Literal["good", "partial", "poor", "tool_problem"]
+    summary: str                   # one sentence; shown in CLI verdict
+    limitations: list[str] = field(default_factory=list)
+    better_alternatives: list[str] = field(default_factory=list)
+    tool_candidates: list[ToolCandidate] = field(default_factory=list)
+    stability_warning: str = ""    # non-empty if source changes frequently
+    breadth_warning: str = ""      # non-empty if source is too broad for one skill
+    recommended_rebuild_cadence: str = ""  # e.g. "monthly", "on each release"
+
+
+@dataclass
 class OpportunityMap:
-    """Ranked skill opportunities for this source."""
+    """Ranked skill opportunities and honest assessment for this source."""
     recommended_action: Literal[
-        "build_one_skill", "build_multiple_skills",
-        "opportunity_map_only", "defer"
+        "build_one_skill",
+        "build_multiple_skills",
+        "build_with_caveats",      # build, but important limitations exist
+        "opportunity_map_only",
+        "defer",                   # source is genuinely unsuitable
     ]
     recommended_skill_type: str
     candidates: list[SkillCandidate] = field(default_factory=list)
+    assessment: SourceAssessment | None = None    # always set by map_opportunities()
+    tool_candidates: list[ToolCandidate] = field(default_factory=list)
 
 
 @dataclass
@@ -95,13 +145,9 @@ class BuildContext:
     source_fit: SourceFit
     opportunity_map: OpportunityMap
     output_dir: Path
-    builder_version: str = "0.1.0"
     generated_at: str = ""          # ISO 8601, set by writer
+    estimated_tokens: int = 0       # set by pipeline if available
 
-
-# ---------------------------------------------------------------------------
-# v0.3 — Multi-source types
-# ---------------------------------------------------------------------------
 
 @dataclass
 class SourceEntry:
@@ -113,6 +159,7 @@ class SourceEntry:
     normalised: str
     ingestion_mode: IngestionMode
     index: int                       # 1-based
+    opportunity_map: OpportunityMap | None = None   # per-source; set by build_multi
 
 
 @dataclass
@@ -131,6 +178,9 @@ class ConflictReport:
     conflicts: list[Conflict]
     summary: str
     has_blocking_conflicts: bool     # True if any severity == "high"
+    shared_vocabulary: dict[int, list[str]] = field(default_factory=dict)
+    # shared_vocabulary: source_pair_key (min_idx * 100 + max_idx) → shared terms
+    # Preserved for honest assessment and debugging; not used by conflict logic itself
 
 
 @dataclass
@@ -140,6 +190,7 @@ class MultiSourceBuildContext:
     output_dir: Path
     conflict_report: ConflictReport
     combined_opportunities: OpportunityMap
+    estimated_tokens: int = 0       # combined token estimate from pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -180,4 +231,5 @@ class RetrievalIndex:
     backend_name: str
     source_count: int
     total_chars: int
+    was_truncated: bool = False      # set True if any retrieve() call hit the budget
     _state: object = field(default=None, repr=False)  # backend-specific state

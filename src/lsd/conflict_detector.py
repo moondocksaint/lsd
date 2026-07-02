@@ -1,14 +1,17 @@
 """Heuristic cross-source conflict detector for LSD v0.3.
 
-Swap-candidate criteria (architectural principle):
-  - Replace with embedding-based similarity when a hosted embeddings API
-    is available and quality regression on the test suite is < 10 %.
-  - Replace with LLM-based conflict detection when token costs fall enough
-    that calling the LLM per source-pair is cheaper than maintaining these
-    heuristics, or when heuristic false-positive rate exceeds 20 % on a
-    curated eval set.
-  - The interface (detect_conflicts(sources) -> ConflictReport) is the
-    stable contract; swap the implementation behind it.
+Audit fix (v0.5): shared_vocabulary (the key terms that triggered contradiction
+detection) is now preserved in ConflictReport.shared_vocabulary instead of
+being discarded after the heuristic runs. This allows downstream consumers
+(extraction-report.md, honest assessment) to surface which terms are shared
+across sources, which is useful context even when no contradiction is found.
+
+Swap-candidate criteria:
+  - Replace with embedding-based similarity when a hosted embeddings API is
+    available and quality regression on the test suite is < 10%.
+  - Replace with LLM-based detection when heuristic false-positive rate
+    exceeds 20% on a curated eval set.
+  The interface (detect_conflicts(sources) -> ConflictReport) is stable.
 """
 
 from __future__ import annotations
@@ -19,31 +22,22 @@ from lsd.models import Conflict, ConflictReport, SourceEntry
 
 
 def detect_conflicts(sources: list[SourceEntry]) -> ConflictReport:
-    """Analyse a list of SourceEntry objects for cross-source conflicts.
-
-    Returns a ConflictReport with contradictions, gaps, and overlaps.
-
-    Heuristics (v0.3, rule-based):
-      1. Contradiction detection — negation patterns around shared key terms.
-      2. Gap detection — headings in one source absent from another.
-      3. Overlap detection — near-duplicate sentences across sources.
-    """
     if len(sources) < 2:
         return ConflictReport(
             conflicts=[],
             summary="Single source — no conflicts to detect.",
             has_blocking_conflicts=False,
+            shared_vocabulary={},
         )
 
     conflicts: list[Conflict] = []
+    shared_vocabulary: dict[int, list[str]] = {}  # pair_key → shared terms
 
-    # 1. Extract headings from each source
     source_headings: list[set[str]] = []
     for s in sources:
         headings = set(re.findall(r"^#{1,4}\s+(.+)$", s.normalised, re.MULTILINE))
         source_headings.append({h.strip().lower() for h in headings})
 
-    # 2. Gap detection: headings in one source missing from the other
     for i, headings_i in enumerate(source_headings):
         for j, headings_j in enumerate(source_headings):
             if i >= j:
@@ -66,7 +60,6 @@ def detect_conflicts(sources: list[SourceEntry]) -> ConflictReport:
                     ),
                 ))
 
-    # 3. Contradiction detection: negation near shared key terms
     def extract_key_terms(text: str) -> set[str]:
         backtick = set(re.findall(r"`([^`]+)`", text))
         bold = set(re.findall(r"\*\*([^*]+)\*\*", text))
@@ -90,6 +83,10 @@ def detect_conflicts(sources: list[SourceEntry]) -> ConflictReport:
     for i in range(len(sources)):
         for j in range(i + 1, len(sources)):
             shared = extract_key_terms(sources[i].normalised) & extract_key_terms(sources[j].normalised)
+            pair_key = i * 100 + j
+            # Audit fix: preserve shared vocabulary regardless of contradiction
+            if shared:
+                shared_vocabulary[pair_key] = sorted(shared)[:20]
             contradicted = [
                 t for t in shared
                 if has_negation_near(sources[i].normalised, t)
@@ -100,19 +97,16 @@ def detect_conflicts(sources: list[SourceEntry]) -> ConflictReport:
                     kind="contradiction",
                     description=(
                         f"Sources {i + 1} and {j + 1} appear to contradict each "
-                        "other on: "
-                        + ", ".join(sorted(contradicted)[:5])
+                        "other on: " + ", ".join(sorted(contradicted)[:5])
                     ),
                     source_indices=[i + 1, j + 1],
                     severity="high",
                     suggestion=(
                         "Read both source sections carefully and decide which claim "
-                        "is authoritative, or note the discrepancy explicitly in the "
-                        "skill definition."
+                        "is authoritative, or note the discrepancy explicitly in the skill."
                     ),
                 ))
 
-    # 4. Overlap detection: near-duplicate sentences
     def extract_sentences(text: str) -> set[str]:
         return {
             s.strip().lower()
@@ -138,7 +132,6 @@ def detect_conflicts(sources: list[SourceEntry]) -> ConflictReport:
                     ),
                 ))
 
-    # Build summary
     n_high = sum(1 for c in conflicts if c.severity == "high")
     n_medium = sum(1 for c in conflicts if c.severity == "medium")
     n_low = sum(1 for c in conflicts if c.severity == "low")
@@ -147,16 +140,14 @@ def detect_conflicts(sources: list[SourceEntry]) -> ConflictReport:
         summary = f"No significant conflicts detected across {len(sources)} sources."
     else:
         parts: list[str] = []
-        if n_high:
-            parts.append(f"{n_high} contradiction(s)")
-        if n_medium:
-            parts.append(f"{n_medium} gap(s)")
-        if n_low:
-            parts.append(f"{n_low} overlap(s)")
+        if n_high: parts.append(f"{n_high} contradiction(s)")
+        if n_medium: parts.append(f"{n_medium} gap(s)")
+        if n_low: parts.append(f"{n_low} overlap(s)")
         summary = "Detected: " + ", ".join(parts) + f" across {len(sources)} sources."
 
     return ConflictReport(
         conflicts=conflicts,
         summary=summary,
         has_blocking_conflicts=n_high > 0,
+        shared_vocabulary=shared_vocabulary,
     )

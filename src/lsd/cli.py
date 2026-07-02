@@ -144,12 +144,16 @@ def build_cmd(
                 console.print(f"[red]Write failed:[/red] {exc}")
                 raise SystemExit(1) from exc
 
+        # Retrieval index summary
         if hasattr(ctx, "_retrieval_index"):
             ri = ctx._retrieval_index
+            trunc_note = " [yellow](truncated)[/yellow]" if getattr(ri, "was_truncated", False) else ""
+            estimated_tokens = getattr(ctx, "estimated_tokens", 0)
+            token_note = f", ~{estimated_tokens:,} tokens" if estimated_tokens else ""
             console.print(
                 f"[dim]Retrieval index: {ri.backend_name} backend, "
                 f"{ri.source_count} source(s), "
-                f"~{ri.total_chars // 1000}K chars[/dim]"
+                f"~{ri.total_chars // 1000}K chars{token_note}[/dim]{trunc_note}"
             )
 
         table = Table(show_header=True, title="Sources")
@@ -178,6 +182,9 @@ def build_cmd(
                 "[bold red]Warning: high-severity contradictions detected. "
                 "Review conflicts.md before using this skill.[/bold red]"
             )
+
+        # Post-build verdict for multi-source
+        _print_verdict(ctx.combined_opportunities)
 
         console.print(f"\n[bold green]✓ Package written to:[/bold green] {result_dir}")
         _print_tree(result_dir)
@@ -241,8 +248,149 @@ def build_cmd(
             console.print(f"[red]Build failed:[/red] {exc}")
             raise SystemExit(1) from exc
 
+    # Post-build verdict — read opportunity_map from metadata.json
+    _print_verdict_from_package(result_dir)
+
     console.print(f"\n[bold green]✓ Package written to:[/bold green] {result_dir}")
     _print_tree(result_dir)
+
+
+# ---------------------------------------------------------------------------
+# Post-build verdict helpers
+# ---------------------------------------------------------------------------
+
+def _print_verdict(opp) -> None:
+    """Print the post-build verdict panel from an OpportunityMap object."""
+    action = opp.recommended_action
+    assessment = opp.assessment
+
+    summary = assessment.summary if assessment and hasattr(assessment, "summary") else ""
+    limitations = assessment.limitations if assessment else []
+    tool_candidates = opp.tool_candidates if hasattr(opp, "tool_candidates") else []
+    stability_warning = assessment.stability_warning if assessment else ""
+    breadth_warning = assessment.breadth_warning if assessment else ""
+
+    _render_verdict_panel(
+        action=action,
+        summary=summary,
+        limitations=limitations,
+        tool_candidates=tool_candidates,
+        stability_warning=stability_warning,
+        breadth_warning=breadth_warning,
+    )
+
+
+def _print_verdict_from_package(package_dir: Path) -> None:
+    """Read metadata.json from a just-written package and print the verdict panel."""
+    meta_path = package_dir / "metadata.json"
+    if not meta_path.exists():
+        return
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return
+
+    opp_summary = meta.get("opportunity_summary", {})
+    action = opp_summary.get("recommended_action", "build")
+    assessment = opp_summary.get("assessment", {})
+    summary = assessment.get("summary", "")
+    limitations = assessment.get("limitations", [])
+    tool_candidate_count = assessment.get("tool_candidate_count", 0)
+    tool_candidates_raw = opp_summary.get("tool_candidates", [])
+    stability_warning = assessment.get("stability_warning", "")
+    breadth_warning = assessment.get("breadth_warning", "")
+
+    # Reconstruct minimal tool candidate objects for display
+    class _TC:
+        def __init__(self, d: dict):
+            self.type = d.get("type", "")
+            self.confidence = d.get("confidence", "")
+            self.why_fit = d.get("why_fit", "")
+
+    tool_candidates = [_TC(tc) for tc in tool_candidates_raw]
+    if not tool_candidates and tool_candidate_count:
+        # Metadata has count but no list — show count-only note
+        tool_candidates = [_TC({"type": f"{tool_candidate_count} tool type(s) detected", "confidence": "", "why_fit": "see skill-opportunities.md"})]
+
+    _render_verdict_panel(
+        action=action,
+        summary=summary,
+        limitations=limitations,
+        tool_candidates=tool_candidates,
+        stability_warning=stability_warning,
+        breadth_warning=breadth_warning,
+    )
+
+
+def _render_verdict_panel(
+    action: str,
+    summary: str,
+    limitations: list,
+    tool_candidates: list,
+    stability_warning: str,
+    breadth_warning: str,
+) -> None:
+    """Render the post-build verdict as a Rich panel."""
+    if action == "build":
+        border = "green"
+        title = "[bold green]Verdict: Build[/bold green]"
+        body_lines = ["[green]This source is a good fit for a skill.[/green]"]
+        if summary:
+            body_lines.append(f"\n{summary}")
+
+    elif action == "build_with_caveats":
+        border = "yellow"
+        title = "[bold yellow]Verdict: Build with caveats[/bold yellow]"
+        body_lines = [
+            "[yellow]This skill was built, but the source has known limitations.[/yellow]",
+            "[yellow]Review carefully before promoting to production.[/yellow]",
+        ]
+        if summary:
+            body_lines.append(f"\n{summary}")
+        if limitations:
+            body_lines.append("\n[bold]Limitations:[/bold]")
+            for lim in limitations:
+                body_lines.append(f"  • {lim}")
+        if stability_warning:
+            body_lines.append(f"\n[yellow]Stability:[/yellow] {stability_warning}")
+        if breadth_warning:
+            body_lines.append(f"[yellow]Breadth:[/yellow] {breadth_warning}")
+
+    elif action == "defer":
+        border = "red"
+        title = "[bold red]Verdict: Defer[/bold red]"
+        body_lines = [
+            "[red]This source is not a good fit for a skill at this time.[/red]",
+        ]
+        if summary:
+            body_lines.append(f"\n{summary}")
+        if limitations:
+            body_lines.append("\n[bold]Reasons:[/bold]")
+            for lim in limitations:
+                body_lines.append(f"  • {lim}")
+
+    else:
+        # Unknown action — skip panel
+        return
+
+    # Tool candidates footnote — shown prominently for build_with_caveats
+    if tool_candidates:
+        body_lines.append("")
+        tc_types = ", ".join(
+            tc.type for tc in tool_candidates if tc.type
+        )
+        body_lines.append(
+            f"[dim]Tool opportunity detected ({tc_types}). "
+            "A tool may serve this source better than a skill — "
+            "see skill-opportunities.md.[/dim]"
+        )
+
+    console.print("")
+    console.print(Panel(
+        "\n".join(body_lines),
+        title=title,
+        border_style=border,
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -432,8 +580,6 @@ def _classify_magnitude(url: str, stored_hash: str, new_normalised: str) -> tupl
     This is a best-effort heuristic. A full RAG-quality comparison would require
     storing the old normalised text, which is done via source.md.
     """
-    # Try to find old source.md relative to a plausible package directory
-    # (best effort — not guaranteed to find it)
     new_words = len(new_normalised.split())
 
     # Extract headings from new content
