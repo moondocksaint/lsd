@@ -1,0 +1,110 @@
+# Source-drift check for an LSD skill package — TEMPLATE.
+#
+# Copy this file into the *skill package* repository (the one that contains
+# metadata.json and scripts/check-drift.py, i.e. the output of `lsd build`) at
+# .github/workflows/drift-check.yml. It does NOT belong in the LSD tool repo —
+# LSD itself is not a skill package, so there is nothing here for it to check.
+#
+# What it does: on a schedule (and on demand), re-fetches every source recorded
+# in metadata.json, recomputes the normalized hash, and reports drift. On any
+# change (MINOR / SUBSTANTIAL / REDIRECTED) or unreachable source (GONE) it
+# opens — or updates — a single tracking issue with the report attached.
+#
+# It runs the package's own bundled scripts/check-drift.py via `uv`, which needs
+# no `lsd` install (the script declares its deps inline via PEP 723). Exit codes:
+#   0 = all sources UNCHANGED   1 = one or more changed   2 = GONE/ERROR   3 = no metadata.json
+
+name: Source drift check
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"        # Mondays, 06:00 UTC — adjust to taste
+  workflow_dispatch:
+    inputs:
+      package_dir:
+        description: "Path to the skill package (contains metadata.json + scripts/)"
+        default: "."
+        required: false
+
+permissions:
+  contents: read
+  issues: write                # needed only for the "open an issue" step
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_DIR: ${{ github.event.inputs.package_dir || '.' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Run drift check
+        id: check
+        run: |
+          set +e
+          uv run "$PACKAGE_DIR/scripts/check-drift.py" \
+            --package-dir "$PACKAGE_DIR" --json > drift-report.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          echo "----- drift-report.json -----"
+          cat drift-report.json
+
+      - name: Open or update a drift issue
+        if: steps.check.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('drift-report.json', 'utf8');
+            const code = '${{ steps.check.outputs.exit_code }}';
+            const severity = code === '2'
+              ? 'a source is GONE or errored'
+              : 'one or more sources changed';
+            const title = '⚠️ Source drift detected';
+            const body = [
+              `LSD's drift check found that ${severity}.`,
+              '',
+              'Review the sources before rebuilding — do not auto-overwrite the',
+              'package. See `source-policy.md` for the fallback chain.',
+              '',
+              '<details><summary>drift-report.json</summary>',
+              '',
+              '```json',
+              report.trim(),
+              '```',
+              '',
+              '</details>',
+            ].join('\n');
+
+            // Reuse a single open issue rather than opening a new one each run.
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'source-drift',
+            });
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['source-drift'],
+              });
+            }
+
+      - name: Fail the run if drift or errors were detected
+        if: steps.check.outputs.exit_code != '0'
+        run: |
+          echo "Drift check exit code: ${{ steps.check.outputs.exit_code }}"
+          exit 1

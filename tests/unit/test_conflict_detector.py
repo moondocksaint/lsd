@@ -3,10 +3,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 
 from lsd.conflict_detector import detect_conflicts
-from lsd.models import ConflictReport, FetchResult, IngestionMode, SourceEntry, SourceFit
+from lsd.models import FetchResult, SourceEntry, SourceFit
 
 
 # ---------------------------------------------------------------------------

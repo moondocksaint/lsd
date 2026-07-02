@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import zipfile
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import click
 from rich.console import Console
@@ -28,9 +29,10 @@ from lsd.utils import slugify
 from lsd.backends import get_visual_backend
 from lsd.classifier import classify
 from lsd.fetcher import fetch
-from lsd.models import IngestionMode
+from lsd.models import IngestionMode, OpportunityMap
 from lsd.pipeline import build, build_multi, prepare
 from lsd.router import route
+from lsd.validation import validate_package
 from lsd.writer import write_multi_package
 
 console = Console()
@@ -196,6 +198,7 @@ def build_cmd(
 
         console.print(f"\n[bold green]✓ Package written to:[/bold green] {result_dir}")
         _print_tree(result_dir)
+        _print_validation(result_dir)
         return
 
     # ------------------------------------------------------------------ #
@@ -260,13 +263,14 @@ def build_cmd(
 
     console.print(f"\n[bold green]✓ Package written to:[/bold green] {result_dir}")
     _print_tree(result_dir)
+    _print_validation(result_dir)
 
 
 # ---------------------------------------------------------------------------
 # Post-build verdict helpers
 # ---------------------------------------------------------------------------
 
-def _print_verdict(opp) -> None:
+def _print_verdict(opp: OpportunityMap) -> None:
     """Print the post-build verdict panel from an OpportunityMap object."""
     action = opp.recommended_action
     assessment = opp.assessment
@@ -309,7 +313,7 @@ def _print_verdict_from_package(package_dir: Path) -> None:
 
     # Reconstruct minimal tool candidate objects for display
     class _TC:
-        def __init__(self, d: dict):
+        def __init__(self, d: dict[str, Any]):
             self.type = d.get("type", "")
             self.confidence = d.get("confidence", "")
             self.why_fit = d.get("why_fit", "")
@@ -332,8 +336,8 @@ def _print_verdict_from_package(package_dir: Path) -> None:
 def _render_verdict_panel(
     action: str,
     summary: str,
-    limitations: list,
-    tool_candidates: list,
+    limitations: list[str],
+    tool_candidates: list[Any],
     stability_warning: str,
     breadth_warning: str,
 ) -> None:
@@ -931,8 +935,27 @@ def _validate_frontmatter_fields(text: str) -> list[str]:
     default=None,
     help="Where to write the re-run output. Defaults to <case_dir>/actual/.",
 )
-def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) -> None:
-    """Re-run a test case and score it against expected output."""
+@click.option(
+    "--init", "init_baseline", is_flag=True, default=False,
+    help="Build the case and write the result into expected/ as a new baseline "
+         "(instead of scoring against one). Requires --force to overwrite.",
+)
+@click.option(
+    "--force", is_flag=True, default=False,
+    help="With --init, overwrite an existing expected/ baseline.",
+)
+def eval_cmd(
+    case_dir: str,
+    expected_dir: Optional[str],
+    output: Optional[str],
+    init_baseline: bool,
+    force: bool,
+) -> None:
+    """Re-run a test case and score it against expected output.
+
+    With --init, build the case and write the output into expected/ instead,
+    creating the baseline that plain `lsd eval` scores against.
+    """
     case_path = Path(case_dir)
     input_file = case_path / "input.json"
 
@@ -952,6 +975,12 @@ def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) 
         raise SystemExit(1)
 
     mode_override = case.get("ingestion_mode_override")
+    exp_dir = Path(expected_dir) if expected_dir else case_path / "expected"
+
+    if init_baseline:
+        _init_baseline(url, mode_override, exp_dir, output, force)
+        return
+
     out_dir = Path(output) if output else case_path / "actual"
 
     console.print(Panel.fit(
@@ -975,7 +1004,6 @@ def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) 
 
     console.print(f"[green]Pipeline output written to:[/green] {result_dir}")
 
-    exp_dir = Path(expected_dir) if expected_dir else case_path / "expected"
     score, max_score, details = _score_package(result_dir, exp_dir if exp_dir.exists() else None)
 
     score_table = Table(title="Rubric Score", show_header=True)
@@ -997,6 +1025,62 @@ def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) 
     if exp_dir.exists():
         console.print("\n[dim]Diffing against expected/...[/dim]")
         _diff_against_expected(result_dir, exp_dir)
+
+
+def _init_baseline(
+    url: str,
+    mode_override: IngestionMode | None,
+    exp_dir: Path,
+    output: Optional[str],
+    force: bool,
+) -> None:
+    """Build a case and write the result into exp_dir as a fresh eval baseline.
+
+    Refuses to clobber an existing non-empty baseline unless --force is given,
+    in which case the directory is cleared first so no stale files survive.
+    """
+    if output:
+        console.print(
+            "[red]--output conflicts with --init.[/red] --init writes the baseline "
+            "into the expected/ dir (use --expected-dir to relocate it)."
+        )
+        raise SystemExit(1)
+
+    if exp_dir.exists() and any(exp_dir.iterdir()):
+        if not force:
+            console.print(
+                f"[red]{exp_dir} already contains a baseline.[/red] "
+                "Re-run with [bold]--force[/bold] to overwrite it."
+            )
+            raise SystemExit(1)
+        shutil.rmtree(exp_dir)
+
+    console.print(Panel.fit(
+        f"[bold]LSD eval --init[/bold] — writing baseline to {exp_dir}",
+        border_style="dim",
+    ))
+    console.print(f"[dim]URL: {url}[/dim]")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Building baseline...", total=None)
+        try:
+            result_dir = build(url, exp_dir, mode_override=mode_override, skill_license=None)
+        except Exception as exc:
+            console.print(f"[red]Pipeline failed:[/red] {exc}")
+            raise SystemExit(1) from exc
+
+    console.print(f"\n[bold green]✓ Baseline written to:[/bold green] {result_dir}")
+    _print_tree(result_dir)
+    _print_validation(result_dir)
+    console.print(
+        "\n[dim]Commit this directory to lock it in as the eval baseline "
+        "that plain [bold]lsd eval[/bold] scores against.[/dim]"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1024,7 +1108,50 @@ def _print_tree(path: Path) -> None:
         console.print(f"  {indent}{icon} {rel.name}")
 
 
-def _score_package(package_dir: Path, expected_dir: Path | None) -> tuple[int, int, list]:
+def _print_validation(package_dir: Path) -> None:
+    """Validate the written package against the agentskills spec and print status.
+
+    Advisory only — the package is already written; this surfaces spec problems
+    so the user fixes them before installing. Skipped gracefully when the
+    optional `skills-ref` validator is not installed.
+    """
+    result = validate_package(package_dir)
+
+    if not result.checked:
+        console.print(
+            "\n[dim]Spec check skipped — install the validator to enable it: "
+            "[bold]pip install skills-ref[/bold][/dim]"
+        )
+        return
+
+    if result.ok:
+        console.print(
+            f"\n[green]✓ SKILL.md conforms to the agentskills spec[/green] "
+            f"[dim](via {result.validator})[/dim]"
+        )
+    else:
+        console.print(Panel(
+            "\n".join(f"• {e}" for e in result.errors),
+            title="[bold yellow]Spec validation warnings[/bold yellow]",
+            border_style="yellow",
+        ))
+        console.print(
+            "[dim]The package was written, but its SKILL.md has the spec issues "
+            "above — fix them before installing.[/dim]"
+        )
+
+    if result.dir_name_hint:
+        # Benign for build output: the dir is user-chosen and `lsd package`
+        # aligns the installable archive's root folder with the skill slug.
+        console.print(
+            "[dim]Note: the output directory isn't named after the skill slug; "
+            "[bold]lsd package --zip[/bold] names the installable archive correctly.[/dim]"
+        )
+
+
+def _score_package(
+    package_dir: Path, expected_dir: Path | None
+) -> tuple[int, int, list[tuple[str, int, str]]]:
     """Score a package directory against the rubric. Returns (score, max, details)."""
     details: list[tuple[str, int, str]] = []
 

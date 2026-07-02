@@ -22,6 +22,7 @@ class AnthropicBackend(LLMBackend):
     def complete(self, system: str, user: str, max_tokens: int = 1024) -> str:
         try:
             import anthropic  # noqa: PLC0415
+            from anthropic.types import TextBlock  # noqa: PLC0415
         except ImportError as exc:
             raise ImportError(
                 "Anthropic SDK not installed. Run: pip install 'lsd[anthropic]'"
@@ -34,4 +35,9 @@ class AnthropicBackend(LLMBackend):
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        return message.content[0].text.strip()
+        block = message.content[0]
+        if not isinstance(block, TextBlock):
+            raise RuntimeError(
+                f"Expected a text block from the model, got {type(block).__name__}"
+            )
+        return block.text.strip()

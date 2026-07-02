@@ -26,6 +26,7 @@ Provider quirks:
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import httpx
 
@@ -66,7 +67,7 @@ class OpenAICompatBackend(LLMBackend):
             "Content-Type": "application/json",
             **self._extra_headers,
         }
-        payload: dict = {
+        payload: dict[str, Any] = {
             "model": self._model,
             "messages": [
                 {"role": "system", "content": system},
@@ -84,4 +85,5 @@ class OpenAICompatBackend(LLMBackend):
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
+        content = data["choices"][0]["message"]["content"]
+        return str(content).strip()

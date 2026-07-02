@@ -102,8 +102,7 @@ The following items are structurally unresolvable — they arise from the archit
 | Limitation | Detail |
 |-----------|--------|
 | PixelRAG backend is a stub | `src/lsd/backends/pixelrag.py` wraps the `pixelrag-render` package, which has not been publicly released. Visual-first ingestion falls back to text-first automatically. |
-| `lsd eval` requires a committed `expected/` snapshot | The first baseline must be created manually (or by running a trusted build and committing the output). There is no `--init` command yet. |
-| `skills-ref validate` is an external CLI | Validation is referenced in SKILL.md and docs but is not run by LSD itself during build. Users must install and run it separately. |
+| Spec validation is best-effort | `lsd build` runs `skills-ref` after writing the package and surfaces any spec problems, but only if `skills-ref` is installed (it ships in the `[dev]` extra). Without it, the build prints a "spec check skipped" note. |
 | Gotchas quality depends on the LLM provider | The compiler now emits a `## Gotchas` section, but its content is only as good as the configured model. With no LLM provider, the section is a TODO placeholder like the other heuristic sections. |
 | No web product | ROADMAP.md describes a hosted web product; it does not exist yet. |
 | No marketplace listing support | ROADMAP.md describes marketplace integration; not implemented. |
@@ -114,33 +113,28 @@ The following items are structurally unresolvable — they arise from the archit
 
 These are the most valuable near-term investments, ordered by impact-to-effort ratio.
 
+### Recently completed
+
+- **`## Gotchas` section in the compiler** — the LLM pass emits a fourth grounded section (env facts, API quirks, version/auth/rate-limit constraints). See `compiler.py` (`_gotchas_block`, `_parse_optional_section`).
+- **`skills-ref` spec validation wired into `build`** — every `lsd build` runs the validator after writing the package and surfaces any spec problems (skipped gracefully if `skills-ref` isn't installed). See `lsd/validation.py` + `cli._print_validation`.
+- **`lsd eval --init`** — builds a case straight into `expected/` to create the baseline, guarded by `--force`. Removes the manual first-baseline step.
+- **CI drift-check template** — `examples/ci/drift-check.yml` runs the package's bundled drift checker on a schedule and opens/updates a tracking issue on drift.
+- **Fixed the bundled `scripts/check-drift.py`** — it hashed raw page text instead of the LSD-normalised markdown, so it reported drift on every run; it now reproduces LSD's `normalized_hash`. Guarded by `tests/unit/test_drift_script_parity.py`.
+
 ### High impact
 
-1. **Activate `skills-ref validate` in the build pipeline** — `skills-ref` is already a dev dependency and its Python API (`skills_ref.validate(package_dir)`) works today. Run it as an optional post-build check and surface warnings in the CLI output. This closes the gap between "we document spec compliance" and "we enforce it automatically." (Confirmed: generated packages pass validation once the directory is named after the skill slug.)
+1. **PixelRAG backend** — When `pixelrag-render` becomes publicly available, wire it into the existing `PixelRAGBackend` adapter. The interface is already in place; only the import and method implementations need to be activated.
 
-2. **Add `lsd eval --init`** — Run a build and commit the output as the `expected/` snapshot. This removes the manual step that blocks first-time eval setup.
+2. **Retrieval backend upgrade** — The `NaiveRetrievalBackend` (full-context stuffing with 50K token guard) is functional but basic. When a higher-quality embedding or chunking approach is available, the `RetrievalBackend` ABC makes it a drop-in swap. The swap criteria are documented in ROADMAP.md and SKILL.md.
 
-3. **PixelRAG backend** — When `pixelrag-render` becomes publicly available, wire it into the existing `PixelRAGBackend` adapter. The interface is already in place; only the import and method implementations need to be activated.
+3. **Semantic-drift similarity** — `lsd check` compares sources with a lexical `SequenceMatcher` ratio, which is blind to *semantic drift* (same words, reorganised meaning). The swap point is isolated in `cli._content_similarity`, which accepts an injectable `similarity_fn`. When a low-latency embeddings endpoint is available, pass an embedding-backed cosine `similarity_fn` there — no other part of the drift path changes. LSD ships no embedding backend today (none of the LLM backends expose embeddings, and the standalone `scripts/check-drift.py` is deliberately `httpx`-only).
 
-> **Done:** *Add a `## Gotchas` section to the compiler* — the LLM compiler pass
-> now extracts environment-specific facts, API quirks, and non-obvious
-> constraints and emits them as a `## Gotchas` block in the generated
-> `SKILL.md`. See `compiler.py` (`_gotchas_block`, `_parse_optional_section`).
-
-### Medium impact
-
-5. **`lsd check --all-sources`** — `lsd check` currently works per-source. A flag that checks every source in `metadata.json → source_dependencies` and reports a unified drift summary would complete the multi-source maintenance workflow.
-
-6. **`lsd check` CI integration example** — Add a GitHub Actions workflow in `.github/workflows/` that runs `lsd check` on a configured package directory and opens an issue on SUBSTANTIAL drift. This completes the maintenance story.
-
-7. **Retrieval backend upgrade** — The `NaiveRetrievalBackend` (full-context stuffing with 50K token guard) is functional but basic. When a higher-quality embedding or chunking approach is available, the `RetrievalBackend` ABC makes it a drop-in swap. The swap criteria are documented in ROADMAP.md and SKILL.md.
-
-8. **Semantic-drift similarity** — `lsd check` compares sources with a lexical `SequenceMatcher` ratio, which is blind to *semantic drift* (same words, reorganised meaning). The swap point is isolated in `cli._content_similarity`, which accepts an injectable `similarity_fn`. When a low-latency embeddings endpoint is available, pass an embedding-backed cosine `similarity_fn` there — no other part of the drift path changes. LSD ships no embedding backend today (none of the LLM backends expose embeddings, and the standalone `scripts/check-drift.py` is deliberately `httpx`-only).
+> **Note on `lsd check --all-sources`:** already covered — `lsd check <package-dir>` iterates every entry in `metadata.json → source_dependencies` and reports a unified table, so no extra flag is needed.
 
 ### Longer term (from ROADMAP.md)
 
-8. Hosted web product — drag-and-drop URL input, no CLI required
-9. Marketplace listing support (claude.ai skill store, VS Code Marketplace)
-10. Org skill library integration
-11. Skill composition — build a skill that references other skills as dependencies
-12. Offline mode — embed a local model for the LLM compiler pass
+4. Hosted web product — drag-and-drop URL input, no CLI required
+5. Marketplace listing support (claude.ai skill store, VS Code Marketplace)
+6. Org skill library integration
+7. Skill composition — build a skill that references other skills as dependencies
+8. Offline mode — embed a local model for the LLM compiler pass

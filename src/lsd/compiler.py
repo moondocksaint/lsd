@@ -28,11 +28,15 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING
 
 from lsd.llm.base import LLMBackend
-from lsd.models import SkillType
-from lsd.models import BuildContext, MultiSourceBuildContext, OpportunityMap
+from lsd.models import BuildContext, MultiSourceBuildContext, OpportunityMap, SourceFit
 from lsd.utils import slugify
+
+if TYPE_CHECKING:
+    from lsd.models import RetrievalIndex
+    from lsd.retrieval.base import RetrievalBackend
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +178,12 @@ Return only the four sections. No preamble."""
     )
 
 
-def _compile_multi_with_llm(ctx, backend, ret_backend, ret_index) -> str:
+def _compile_multi_with_llm(
+    ctx: MultiSourceBuildContext,
+    backend: LLMBackend,
+    ret_backend: RetrievalBackend,
+    ret_index: RetrievalIndex,
+) -> str:
     opp = ctx.combined_opportunities
     skill_type = opp.recommended_skill_type.replace("_", " ")
     queries = [
@@ -252,8 +261,12 @@ Return only the four sections."""
 # Template renderers
 # ---------------------------------------------------------------------------
 
-def _allowed_tools_for_skill_type(skill_type: SkillType) -> str:
+def _allowed_tools_for_skill_type(skill_type: str) -> str:
     """Return a space-separated allowed-tools string appropriate for the skill type.
+
+    Accepts any string (the recommended skill type is stored as ``str`` and may be
+    a non-SkillType sentinel such as ``"none"``); unknown values fall through to
+    the default mapping.
 
     Rules (agentskills spec: space-separated tool name patterns):
       reviewer / rewriter / reference_companion / semantic_reference
@@ -621,7 +634,7 @@ def _related_skills_block(opp: OpportunityMap) -> str:
     return "\n".join(lines)
 
 
-def _usage_hints(fit, skill_type: str) -> str:
+def _usage_hints(fit: SourceFit, skill_type: str) -> str:
     hints = []
     if fit.rule_density == "high":
         hints.append("- Reviewing or auditing content against rules or heuristics")
