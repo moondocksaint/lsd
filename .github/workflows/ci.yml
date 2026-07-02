@@ -1,0 +1,49 @@
+name: CI
+
+# Runs the full green gate on every push to main and every pull request, so a
+# broken commit can never reach main while docs claim the suite is green — the
+# exact failure that motivated the docs/code reconciliation (see ROADMAP.md
+# § Execution plan, Phase 1). Unit tests never hit the network (httpx is mocked),
+# so this runs fully offline.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  green-gate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the validated floor (pyproject requires-python >=3.11 and pins
+        # ruff target-version / mypy python_version to 3.11). Widen the matrix as
+        # newer versions are validated.
+        python-version: ["3.11"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install (editable, with dev tooling)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Lint (ruff)
+        run: python -m ruff check src tests
+
+      - name: Types (mypy --strict via pyproject)
+        run: python -m mypy src
+
+      - name: Tests (pytest)
+        run: python -m pytest -q
