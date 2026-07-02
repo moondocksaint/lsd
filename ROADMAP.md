@@ -339,10 +339,13 @@ records the rationale behind past decisions.
 
 ### Backlog — no external blocker, just unscheduled
 
-- **Expand the eval case set** — there is currently one eval case
-  (`tests/cases/wikipedia-ai-writing/`). A hybrid case (code documentation) and a
-  visual-first case (once PixelRAG is available) would give the regression harness
-  broader coverage.
+- **Expand the eval case set** — there is currently one *baselined* eval case
+  (`tests/cases/wikipedia-ai-writing/`, with a committed `expected/` snapshot).
+  A second case directory, `tests/cases/pixelrag-repo/`, exists with an
+  `input.json` but no baseline yet — `lsd eval tests/cases/pixelrag-repo --init`
+  would establish one. A hybrid case (code documentation) and a visual-first
+  case (once PixelRAG is available) would give the regression harness broader
+  coverage still.
 - **Description optimizer** — the meta-skill generates descriptions from source intent.
   Running the Anthropic `skill-creator`'s `run_loop.py`-style trigger optimization on
   generated descriptions would likely improve agent recall.

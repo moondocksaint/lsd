@@ -38,6 +38,8 @@ src/lsd/
   compiler.py       LLM compiler pass → SKILL.md sections (Core principle,
                     Workflow, Output format, Gotchas) + heuristic fallback.
   writer.py         Writes the full package to disk (single & multi-source).
+  validation.py     Optional agentskills-spec check via skills-ref;
+                    validate_package() is called by build() after writing.
   models.py         All LSD dataclasses/Literals. Read this before touching data.
   utils.py          slugify(), CHARS_PER_TOKEN, estimate_tokens(),
                     combined_token_estimate() — the shared-helper home.
@@ -50,7 +52,8 @@ tests/              pytest unit tests + eval cases (tests/cases/<name>/).
 skills/lsd-builder/ The meta-skill (SKILL.md + references/).
 docs/               architecture, spec, ingestion-modes, cross-case comparison.
 schema/             metadata.schema.json.
-examples/           Two filled example packages.
+examples/           Two filled example packages, plus examples/ci/ — a
+                    copy-paste CI template for skill-package repos.
 ```
 
 Top-level narrative docs: `README.md` (product + spec-adherence table),

@@ -9,8 +9,9 @@
 LSD converts URLs into installable, versioned AI skill packages conforming to the [Agent Skills open standard](https://agentskills.io). It ships as a Python CLI (`lsd`), a meta-skill (`skills/lsd-builder/`) that wraps the CLI for conversational use, and a test harness with an eval baseline.
 
 **Current version:** 0.5.0  
-**Test suite:** 104 tests passing (see *Post-handoff maintenance* below; the
-earlier "81 passing" predated added tests and a build-breaking regression)  
+**Test suite:** 116 tests passing (see *Post-handoff maintenance* and
+*Follow-up pass* below; the earlier "81 passing" predated added tests and a
+build-breaking regression)  
 **Eval baseline:** 14/14 (Wikipedia AI-writing case, mercury-2, Inception dLLM).
 Note: the committed `expected/` snapshot predates the `## Gotchas` section, so
 `lsd eval` will now report a `DIFFER` on `SKILL.md` until the baseline is

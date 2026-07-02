@@ -20,6 +20,9 @@ See [`examples/`](examples/) for filled example packages:
 - [`examples/wikipedia-ai-writing/`](examples/wikipedia-ai-writing/) — text-dominant source
 - [`examples/pixelrag-repo/`](examples/pixelrag-repo/) — hybrid / visually structured source
 
+See [`examples/ci/`](examples/ci/) for a copy-paste GitHub Actions template that runs the
+drift checker on a schedule against a skill-package repo (not the LSD tool repo itself).
+
 ## Status
 
 v0.5.0 — active development. See [`ROADMAP.md`](ROADMAP.md) for the full vision and [`CHANGELOG.md`](CHANGELOG.md) for what's new.

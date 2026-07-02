@@ -109,6 +109,57 @@ env var to handle this. Known Inception model IDs as of 2026-06-30:
 
 ---
 
+## Post-v0.5 — Claude Code review pass (branch `claude/link-skill-converter-review-4mpsab`)
+
+**Session:** Claude Code, four rounds within one engagement, 2026-07-02
+**Work done by:** Claude Code agent, working directly in the repo (read/edit/bash
+tools), not the bash+GitHub-API push pattern used in the sessions above.
+
+There is no v0.5 entry above this one — v0.5.0 (per HANDOFF.md's own provenance
+note) was built by a separate Perplexity Computer session not recorded in this
+file. This entry does not attempt to backfill that gap; it covers only the
+work below.
+
+**Round 1 — `29a1446`: restore importability, add Gotchas + drift seam**
+- Fixed an `IndentationError` in `compiler.py` (introduced by commit `e5f02c2`)
+  that made the entire `lsd` package unimportable — every CLI command and the
+  whole test suite were broken despite docs claiming a green build.
+- Repaired four test modules left stale by that same refactor.
+- Added the `## Gotchas` section to the LLM compiler pass.
+- Isolated drift similarity behind `cli._content_similarity(..., similarity_fn=None)`
+  as the swap point for a future embedding-backed cosine similarity.
+- Suite: 90 → 104 tests passing.
+
+**Round 2 — `3e69410`: LLM-independent gaps**
+- Wired `skills-ref` spec validation into `build()` via new `lsd/validation.py`.
+- Added `lsd eval --init [--force]` to create an eval baseline without a manual step.
+- Added `examples/ci/drift-check.yml`, a copy-paste CI template for skill-package repos.
+- Fixed a real bug: the bundled `scripts/check-drift.py` hashed raw page text
+  instead of LSD's normalised markdown, so it reported drift on every run
+  regardless of whether the source had actually changed.
+- Suite: 104 → 116 tests passing.
+
+**Round 3 — `16ef089`: lint/type debt**
+- Cleared all `ruff check` findings and all `mypy --strict` findings (run as
+  `python -m mypy`, not a bare global `mypy`, which resolves against an
+  environment without the project's dependencies and reports false import
+  errors). Type-only / style-only; no behaviour change.
+
+**Round 4 — `8afb8a3`: doc housekeeping**
+- Clarified the job of each top-level doc: HANDOFF.md is a decision log only;
+  live actionable items live in README.md § Suggested next steps (near-term)
+  and ROADMAP.md § Open gaps for the next contributor (blocked on an external
+  dependency, or unscheduled backlog).
+- Corrected a stale ROADMAP.md claim that the v0.4 retrieval default uses
+  embeddings/FAISS — the shipped default, `NaiveRetrievalBackend`, is lexical.
+
+No new eval baseline was generated in any of these rounds — no LLM provider
+was configured in the working environment. The `mercury-2` baseline from v0.4
+remains the committed baseline, though it now predates the `## Gotchas`
+section (see README.md § Suggested next steps for the regeneration steps).
+
+---
+
 ## Eval diff normalization policy
 
 The `lsd eval` diff harness normalizes two volatile fields on **both sides**
