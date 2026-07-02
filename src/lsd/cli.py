@@ -331,10 +331,19 @@ def _render_verdict_panel(
     breadth_warning: str,
 ) -> None:
     """Render the post-build verdict as a Rich panel."""
-    if action == "build":
+    if action in ("build_one_skill", "build_multiple_skills", "build"):
         border = "green"
-        title = "[bold green]Verdict: Build[/bold green]"
-        body_lines = ["[green]This source is a good fit for a skill.[/green]"]
+        multi = action == "build_multiple_skills"
+        title = (
+            "[bold green]Verdict: Build (multiple skills)[/bold green]"
+            if multi else
+            "[bold green]Verdict: Build[/bold green]"
+        )
+        body_lines = [
+            "[green]This source is a good fit for a skill.[/green]"
+            if not multi else
+            "[green]This source supports multiple skill types — consider building each.[/green]"
+        ]
         if summary:
             body_lines.append(f"\n{summary}")
 

@@ -462,7 +462,7 @@ def _build_metadata(
     assessment_block: dict = {}
     if opp.assessment:
         assessment_block = {
-            "verdict": opp.assessment.verdict,
+            "verdict": opp.assessment.skill_fit_verdict,
             "limitations": opp.assessment.limitations,
             "better_alternatives": opp.assessment.better_alternatives,
             "tool_candidate_count": len(opp.tool_candidates),
@@ -573,7 +573,7 @@ def _build_metadata_multi(
     assessment_block: dict = {}
     if opp.assessment:
         assessment_block = {
-            "verdict": opp.assessment.verdict,
+            "verdict": opp.assessment.skill_fit_verdict,
             "limitations": opp.assessment.limitations,
             "better_alternatives": opp.assessment.better_alternatives,
             "tool_candidate_count": len(opp.tool_candidates),
@@ -698,7 +698,7 @@ def _opportunities_md(opp) -> str:
         a = opp.assessment
         lines.append("## Assessment")
         lines.append("")
-        lines.append(f"**Verdict:** {a.verdict}")
+        lines.append(f"**Verdict:** {a.skill_fit_verdict}")
         if a.limitations:
             lines.append("")
             lines.append("**Limitations:**")

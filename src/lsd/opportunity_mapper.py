@@ -339,7 +339,6 @@ def map_opportunities(fit: SourceFit, url: str) -> OpportunityMap:
         summary=assessment_summary,
         limitations=limitations,
         better_alternatives=better_alternatives,
-        tool_candidates=tool_candidates,
         stability_warning=stability_warning,
         breadth_warning=breadth_warning,
         recommended_rebuild_cadence=rebuild_cadence,
@@ -428,7 +427,6 @@ def map_opportunities_multi(sources: list[SourceEntry]) -> OpportunityMap:
         summary=combined_summary,
         limitations=all_limitations,
         better_alternatives=list(dict.fromkeys(all_alternatives)),  # deduplicate, preserve order
-        tool_candidates=all_tool_candidates,
         stability_warning="\n".join(all_stability_warnings),
         recommended_rebuild_cadence="on each source update" if all_stability_warnings else "",
     )

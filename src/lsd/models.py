@@ -90,12 +90,47 @@ class ToolCandidate:
       function_tool — OpenAI/Anthropic function/tool definition
       api_wrapper   — Thin HTTP client the agent can call via bash/code
       data_pipeline — ETL or batch process, not suitable for skill encoding
+
+    Derived properties (.type, .confidence, .why_fit, .build_timing) provide
+    a SkillCandidate-compatible read surface for tables and metadata — so the
+    writer and CLI can render tool and skill candidates uniformly without
+    branching. The compiler uses the richer fields (.tool_type, .description,
+    .why_not_skill, .effort) for SKILL.md generation.
     """
     tool_type: Literal["mcp_server", "function_tool", "api_wrapper", "data_pipeline"]
     description: str                # one sentence: what the tool would do
     why_not_skill: str              # why a skill is insufficient
     effort: Literal["low", "medium", "high"]   # relative build effort
     reference_url: str = ""        # relevant SDK/framework docs
+
+    # ------------------------------------------------------------------
+    # Derived properties — SkillCandidate-compatible read surface
+    # ------------------------------------------------------------------
+
+    @property
+    def type(self) -> str:
+        """Human-readable tool type label (same shape as SkillCandidate.type)."""
+        return self.tool_type.replace("_", " ").title()
+
+    @property
+    def confidence(self) -> str:
+        """Confidence derived from build effort: low effort → high confidence."""
+        return {"low": "high", "medium": "medium", "high": "low"}.get(self.effort, "medium")
+
+    @property
+    def why_fit(self) -> str:
+        """Why this tool fits — maps why_not_skill to a positive framing."""
+        return self.description
+
+    @property
+    def build_timing(self) -> str:
+        """Build timing derived from effort: low → now, medium → later, high → later."""
+        return "now" if self.effort == "low" else "later"
+
+    @property
+    def needed_extras(self) -> list[str]:
+        """Compatibility shim — SkillCandidate has needed_extras; return reference if set."""
+        return [self.reference_url] if self.reference_url else []
 
 
 @dataclass
@@ -111,12 +146,15 @@ class SourceAssessment:
 
     Better_alternatives list: each entry describes something the user
     could do instead of (or in addition to) building a skill.
+
+    Tool candidates are stored on OpportunityMap.tool_candidates (the
+    canonical list). SourceAssessment carries only the scalar assessment
+    fields so there is a single source of truth for tool candidate data.
     """
     skill_fit_verdict: Literal["good", "partial", "poor", "tool_problem"]
     summary: str                   # one sentence; shown in CLI verdict
     limitations: list[str] = field(default_factory=list)
     better_alternatives: list[str] = field(default_factory=list)
-    tool_candidates: list[ToolCandidate] = field(default_factory=list)
     stability_warning: str = ""    # non-empty if source changes frequently
     breadth_warning: str = ""      # non-empty if source is too broad for one skill
     recommended_rebuild_cadence: str = ""  # e.g. "monthly", "on each release"
@@ -124,13 +162,19 @@ class SourceAssessment:
 
 @dataclass
 class OpportunityMap:
-    """Ranked skill opportunities and honest assessment for this source."""
+    """Ranked skill opportunities and honest assessment for this source.
+
+    recommended_action values:
+      build_one_skill      — single strong skill candidate; build now
+      build_multiple_skills — two or more high-confidence candidates; build all
+      build_with_caveats   — build, but important limitations exist; surface them
+      defer                — source is genuinely unsuitable; do not build
+    """
     recommended_action: Literal[
         "build_one_skill",
         "build_multiple_skills",
-        "build_with_caveats",      # build, but important limitations exist
-        "opportunity_map_only",
-        "defer",                   # source is genuinely unsuitable
+        "build_with_caveats",
+        "defer",
     ]
     recommended_skill_type: str
     candidates: list[SkillCandidate] = field(default_factory=list)

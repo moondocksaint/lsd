@@ -61,17 +61,83 @@ Full instructions for both modes are in `references/interview-guide.md`.
 
 ## What to do after building
 
-After `lsd build` completes, always:
+After `lsd build` completes, always do the following steps **in order**:
 
-1. Show the user the fit score and skill type detected.
-2. Show the proposed skill name and ask for confirmation or a change.
+1. **Show the verdict.** Read `metadata.json → opportunity_summary.recommended_action`.
+   Map it to user language using the verdict playbook below. If action is `defer`,
+   stop here — do not proceed to step 2.
+
+2. **Show the fit score and skill type.** Report `overall_fit` and
+   `recommended_skill_type` from `metadata.json`.
+
+3. **Confirm the skill name.** Show the proposed slug from `SKILL.md` frontmatter
+   and ask the user to confirm or rename.
    - In Express mode this is the first time you ask about the name.
    - In Guided mode you already agreed on a name; confirm the final slug matches.
-3. Show the opportunities list from `skill-opportunities.md` and ask if any
-   secondary skills are worth queuing.
-4. If the source fit was low or the build used the heuristic fallback (no LLM),
-   flag this explicitly.
-5. Offer to run `lsd package --zip` to produce a ZIP for claude.ai installation.
+
+4. **Surface tool candidates (if any).** Check `skill-opportunities.md` for a
+   `## Tool candidates` section. If present, surface these explicitly:
+   > "This source also triggered tool candidate detection: [type]. A [type] would
+   > let you call the underlying capability live rather than just know about it.
+   > Want me to help you decide whether to build the tool alongside the skill?"
+   Do this before moving to secondary skills — tool candidates are higher priority.
+
+5. **Show secondary skill opportunities.** Show the `## Skill candidates` list from
+   `skill-opportunities.md` and ask if any secondary skills are worth queuing now.
+
+6. **Flag quality issues.** If source fit is `low` or the build used the heuristic
+   fallback (no LLM — `compiler_model` is `null` or `"heuristic"` in `metadata.json`),
+   call this out explicitly before offering installation.
+
+7. **Offer packaging — only if verdict is not `defer`.** Run:
+   ```bash
+   lsd package ./my-skill/ --zip
+   ```
+   to produce a ZIP for claude.ai installation. Do not offer this step if the
+   verdict was `defer` or if the user explicitly declined the build.
+
+8. **Remind the user about the maintenance scripts.** The package includes
+   `scripts/check-drift.py` and `scripts/motivation-check.py`. Mention these:
+   > "Your package includes two maintenance scripts in `scripts/`. Run
+   > `check-drift.py` periodically to detect upstream source changes, and
+   > `motivation-check.py` after any drift event to verify your original build
+   > intent still applies."
+
+---
+
+## Verdict playbook
+
+Use this table to translate `recommended_action` from `metadata.json` into agent
+behaviour. The CLI also renders this as a coloured panel after each build.
+
+| Action | User message | Agent behaviour |
+|--------|-------------|-----------------|
+| `build_one_skill` | "Build complete — source is a good fit." | Proceed through all post-build steps. |
+| `build_multiple_skills` | "Build complete — source supports [N] skill types. This build covers [primary type]." | Proceed; note the secondary types in step 5. |
+| `build_with_caveats` | "Build complete, but this source has known limitations. Review before promoting." | Proceed, but make step 4 (tool candidates) and step 6 (quality flags) prominent. Read and surface every item in `metadata.json → opportunity_summary.assessment.limitations`. |
+| `defer` | "This source is not a good fit for a skill. [reason from assessment.summary]." | Do not run `lsd build`. Explain the reason. Offer to help the user find a better source. |
+
+For `build_with_caveats`, always quote at least one limitation sentence verbatim
+from `skill-opportunities.md → ## Assessment → Limitations`.
+
+---
+
+## Drift response playbook
+
+After running `lsd check <package-dir>`, map the drift state to the following
+agent actions. Do not skip states or merge behaviours — each state has a distinct
+response.
+
+| State | Meaning | Agent action |
+|-------|---------|-------------|
+| `UNCHANGED` | Hash identical to last build | Confirm no action needed. Offer to re-run `motivation-check.py` if time has elapsed. |
+| `MINOR` | Content changed, heading structure intact | Offer to rebuild: "The source has changed. Want me to rebuild the skill now?" Run `lsd build <url> --output <package-dir>` only after confirmation. |
+| `SUBSTANTIAL` | Major rewrite — new sections, large content shift | Warn: "The source has been substantially rewritten. Your original build motivation may no longer apply." Run `motivation-check.py` first. Do not rebuild without explicit user confirmation and a second look at the source fit. |
+| `GONE` | URL unreachable (4xx/5xx/timeout) | Preserve the existing package. "The source URL is unreachable. Your existing package is intact. Check `source-policy.md` for the fallback chain." Do not overwrite. |
+| `REDIRECTED` | URL permanently moved | "The source has moved to [new URL]. Want me to update the canonical URL in `metadata.json` and rebuild?" Only update after confirmation. |
+
+For multi-source packages, any single-source drift state of `SUBSTANTIAL` or
+`GONE` should be escalated to the user even if the other sources are `UNCHANGED`.
 
 ---
 
@@ -89,7 +155,7 @@ lsd build https://source1.com https://source2.com --output ./my-skill/
 
 # Check a package for drift
 lsd check ./my-skill/              # package directory (reads metadata.json)
-lsd check https://example.com      # single URL (compares against any cached hash)
+lsd check https://example.com      # single URL (classify + route, no drift state)
 
 # Package for webapp/desktop installation (produces ZIP)
 lsd package ./my-skill/ --zip
@@ -99,7 +165,35 @@ lsd eval tests/cases/my-case/
 
 # Validate skill against agentskills spec
 skills-ref validate ./my-skill/
+
+# Run maintenance scripts (from package directory)
+python scripts/check-drift.py
+python scripts/motivation-check.py
 ```
+
+---
+
+## Package structure
+
+Every `lsd build` run produces the following directory:
+
+```
+<package-dir>/
+├── README.md               ← start here; agent entry point for versioning
+├── SKILL.md                ← load this into your agent
+├── source.md               ← normalised source text
+├── source-policy.md        ← update policy, fallback chain
+├── skill-opportunities.md  ← skill types + tool candidates + honest assessment
+├── extraction-report.md    ← fit scores, routing rationale, limitations
+├── metadata.json           ← machine-readable provenance (hash, model, timestamps)
+├── CHANGELOG.md            ← human-readable version history
+└── scripts/
+    ├── check-drift.py      ← detect upstream source drift (run manually or in CI)
+    └── motivation-check.py ← verify original build intent still applies post-drift
+```
+
+For multi-source builds, additional files are added:
+`sources-index.md`, `source-1.md … source-N.md`, `conflicts.md`, `index.md`.
 
 ---
 
@@ -137,15 +231,7 @@ the `name` field in `SKILL.md` frontmatter. `lsd package --zip` handles this.
 
 Every package records a `source_dependency` block in `metadata.json`. Running
 `lsd check ./my-skill/` re-fetches the source and compares `normalized_hash`.
-Change magnitude is classified as:
-
-| State | Meaning | Action |
-|---|---|---|
-| Unchanged | Hash identical | No action |
-| Minor | Content changed, structure intact | Offer rebuild |
-| Substantial | New sections, major rewrite | Warn: original motivation may no longer apply |
-| Gone | 404 / unreachable | Do not overwrite; present fallback chain |
-| Redirected | URL moved | Offer to update canonical URL |
+See the **Drift response playbook** above for per-state agent behaviour.
 
 For multi-source packages, drift in any one source triggers a check report for
 all sources.
