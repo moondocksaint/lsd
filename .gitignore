@@ -22,6 +22,16 @@ htmlcov/
 # LSD build output written during manual runs / eval
 tests/cases/*/actual/
 
+# Secrets / local env — NEVER commit real API keys.
+# `env/` above only ignores the virtualenv dir, not a `.env` file, so list it here.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+*.local
+
 # Editor / OS
 .DS_Store
 *.swp

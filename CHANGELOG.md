@@ -18,6 +18,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `skill-opportunities.md`. Deterministic output; `metadata.json → artifacts.mcp_scaffold`
   records it. See `writer._write_mcp_scaffold`; covered by `tests/unit/test_writer.py`.
 
+### Security
+- **Hardened secret hygiene for LLM keys.** `.gitignore` now excludes `.env`
+  (previously only the `env/` virtualenv dir was ignored), `.env.*`, `*.key`, and
+  `*.pem`; added a `.env.example` template with no real values; added
+  [`docs/llm-provider.md`](docs/llm-provider.md) documenting how LSD consumes the key
+  (env-only; never persisted or logged) and how to inject it safely for local runs and
+  in CI (encrypted secrets, gated away from fork PRs). No code change — LSD already
+  reads keys only from `os.environ` and sends them only to the configured endpoint.
+
 ### Docs
 - **Folded a sequenced execution plan into `ROADMAP.md` § Execution plan** — phases the
   remaining work (CI guardrail → LLM provider + baseline regen → no-blocker backlog →
