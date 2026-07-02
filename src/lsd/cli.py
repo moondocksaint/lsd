@@ -474,9 +474,18 @@ def _check_package(package_dir: Path, url_override: Optional[str] = None) -> Non
             results.append((label + "?", "ERROR", "No URL in metadata", "", ""))
             continue
 
+        # Resolve the stored source.md path for this dep so _classify_magnitude
+        # can diff old vs new normalised text directly rather than using proxies.
+        # Single-source: source.md; multi-source: source-{index}.md.
+        if idx:
+            source_file = package_dir / f"source-{idx}.md"
+        else:
+            source_file = package_dir / "source.md"
+        old_source_path = source_file if source_file.exists() else None
+
         console.print(f"[dim]Fetching {check_url}...[/dim]")
         state, new_hash, magnitude_note, redirect_url = _fetch_and_classify_drift(
-            check_url, stored_hash
+            check_url, stored_hash, old_source_path=old_source_path
         )
         results.append((label + check_url, state, magnitude_note, new_hash, redirect_url))
 
@@ -533,11 +542,16 @@ def _check_package(package_dir: Path, url_override: Optional[str] = None) -> Non
 def _fetch_and_classify_drift(
     url: str,
     stored_hash: str,
+    old_source_path: Path | None = None,
 ) -> tuple[str, str, str, str]:
     """Fetch a URL and classify drift against stored_hash.
 
     Returns (state, new_hash, magnitude_note, redirect_url).
     state: UNCHANGED | MINOR | SUBSTANTIAL | GONE | REDIRECTED | ERROR
+
+    old_source_path: if provided and the file exists, _classify_magnitude will
+    diff the stored source.md text against the new normalised text directly,
+    producing a sharper MINOR/SUBSTANTIAL signal than the word-count heuristic.
     """
     from lsd.normaliser import content_hash, normalise
 
@@ -560,8 +574,15 @@ def _fetch_and_classify_drift(
     if new_hash == stored_hash:
         return "UNCHANGED", new_hash, "Hash identical", ""
 
-    # Compute change magnitude
-    magnitude, note = _classify_magnitude(url, stored_hash, normalised)
+    # Load stored source text for direct diffing if available
+    old_normalised: str | None = None
+    if old_source_path is not None:
+        try:
+            old_normalised = old_source_path.read_text(encoding="utf-8")
+        except Exception:
+            pass  # fall back to proxy heuristic
+
+    magnitude, note = _classify_magnitude(normalised, old_normalised=old_normalised)
     return magnitude, new_hash, note, ""
 
 
@@ -576,36 +597,117 @@ def _detect_redirect(url: str) -> str:
         return ""
 
 
-def _classify_magnitude(url: str, stored_hash: str, new_normalised: str) -> tuple[str, str]:
+def _classify_magnitude(
+    new_normalised: str,
+    old_normalised: str | None = None,
+) -> tuple[str, str]:
     """Classify the magnitude of a content change as MINOR or SUBSTANTIAL.
 
-    Heuristics (no embedding model required):
-    - Heading structure diff: if > 30% of headings changed → SUBSTANTIAL
-    - Size ratio: if new content is < 60% or > 200% of old length → SUBSTANTIAL
-    - We don't have the old normalised text, only the stored hash (not reversible).
-      Instead we use the stored source.md if it exists alongside the package.
-      If not available, fall back to size heuristic via word-count proxy.
+    Two modes depending on whether the stored source.md text is available:
 
-    This is a best-effort heuristic. A full RAG-quality comparison would require
-    storing the old normalised text, which is done via source.md.
+    Direct diff (preferred — when old_normalised is provided):
+      Uses difflib.SequenceMatcher on the normalised line sets to compute a
+      similarity ratio, plus heading-set symmetric difference and word-count
+      ratio. Thresholds:
+        similarity < 0.60  → SUBSTANTIAL  (> 40% of content is different)
+        heading loss > 30% → SUBSTANTIAL  (major structural reorganisation)
+        word ratio < 0.50 or > 2.5 → SUBSTANTIAL  (dramatic size shift)
+        otherwise          → MINOR
+
+    Proxy heuristic (fallback — when old_normalised is absent):
+      Uses new content word count as proxy. Less accurate; biased toward
+      MINOR because we lack the old baseline.
+        new_words < 200    → SUBSTANTIAL  (likely truncation or gate)
+        otherwise          → MINOR
+
+    Swap-candidate: replace with an embedding-based semantic similarity when a
+    low-latency embedding API is available in the LSD environment — semantic
+    drift (same words, different meaning) is invisible to both modes above.
     """
-    new_words = len(new_normalised.split())
+    import difflib
 
-    # Extract headings from new content
+    new_words = len(new_normalised.split())
     new_headings = set(re.findall(r"^#{1,3}\s+(.+)$", new_normalised, re.MULTILINE))
 
-    # Without old text we use word count as proxy: < 500 words is likely a
-    # fetch failure or near-empty page, flag as SUBSTANTIAL
+    # ------------------------------------------------------------------ #
+    # Direct diff — old source.md text available
+    # ------------------------------------------------------------------ #
+    if old_normalised is not None:
+        old_words = len(old_normalised.split())
+        old_headings = set(re.findall(r"^#{1,3}\s+(.+)$", old_normalised, re.MULTILINE))
+
+        # Similarity ratio on content lines (strip LSD metadata header lines
+        # before diffing so timestamps / word-count lines don't skew the score)
+        old_lines = _content_lines(old_normalised)
+        new_lines = _content_lines(new_normalised)
+        ratio = difflib.SequenceMatcher(None, old_lines, new_lines).ratio()
+
+        # Word-count ratio
+        word_ratio = new_words / old_words if old_words else 1.0
+
+        # Heading loss: headings present in old but gone in new
+        if old_headings:
+            lost_fraction = len(old_headings - new_headings) / len(old_headings)
+        else:
+            lost_fraction = 0.0
+
+        reasons: list[str] = []
+        if ratio < 0.60:
+            reasons.append(f"similarity {ratio:.0%}")
+        if lost_fraction > 0.30:
+            reasons.append(f"{lost_fraction:.0%} of headings removed")
+        if word_ratio < 0.50:
+            reasons.append(f"word count dropped to {word_ratio:.0%}")
+        elif word_ratio > 2.5:
+            reasons.append(f"word count grew to {word_ratio:.1f}×")
+
+        if reasons:
+            detail = "; ".join(reasons)
+            return (
+                "SUBSTANTIAL",
+                f"{new_words:,} words now vs {old_words:,} before — {detail}",
+            )
+
+        # MINOR — surface the similarity score so the user can judge
+        changed_headings = old_headings.symmetric_difference(new_headings)
+        heading_note = (
+            f", {len(changed_headings)} heading(s) changed" if changed_headings else ""
+        )
+        return (
+            "MINOR",
+            f"similarity {ratio:.0%}, {new_words:,} words (was {old_words:,}){heading_note}",
+        )
+
+    # ------------------------------------------------------------------ #
+    # Proxy heuristic — no stored source text
+    # ------------------------------------------------------------------ #
     if new_words < 200:
-        return "SUBSTANTIAL", f"New content very short ({new_words} words) — possible truncation or gate"
+        return (
+            "SUBSTANTIAL",
+            f"New content very short ({new_words} words) — possible truncation or gate "
+            "(no stored source.md to compare against)",
+        )
 
-    if new_words < 500:
-        return "MINOR", f"Content changed, short result ({new_words} words)"
+    heading_note = f", {len(new_headings)} headings" if new_headings else ", no headings"
+    return (
+        "MINOR",
+        f"Content changed, {new_words:,} words{heading_note} "
+        "(no stored source.md — proxy estimate only)",
+    )
 
-    if not new_headings:
-        return "MINOR", f"Content changed, {new_words} words, no heading structure to compare"
 
-    return "MINOR", f"Content changed, {new_words} words, {len(new_headings)} headings"
+def _content_lines(normalised: str) -> list[str]:
+    """Return content lines from a normalised source, stripping the LSD
+    metadata header (title, URL, Retrieved, word count lines) that change
+    between builds and would otherwise inflate the diff score."""
+    lines = normalised.splitlines()
+    try:
+        content_start = next(
+            i for i, ln in enumerate(lines) if ln.strip() == "## Content"
+        )
+        return lines[content_start:]
+    except StopIteration:
+        return lines
 
 
 def _check_url(url: str) -> None:
