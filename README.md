@@ -131,7 +131,7 @@ embedding similarity), see [`ROADMAP.md` § Open gaps for the next contributor](
 
 ### Blocked on LLM/model access (not architecture — nothing to build)
 
-1. **Compiler output quality, including `## Gotchas`** — the LLM compiler pass is fully wired, but its output is only as good as the configured model. `LSD_LLM_PROVIDER` defaults to `anthropic` whether or not it's set; the actual fallback trigger is a missing API key for the resolved provider (`ANTHROPIC_API_KEY` for `anthropic`, `LSD_LLM_API_KEY` for `openai-compat`) — without one, every section (including Gotchas) is a heuristic TODO placeholder. See `src/lsd/llm/__init__.py` for all env vars.
+1. **Compiler output quality, including `## Gotchas`** — the LLM compiler pass is fully wired, but its output is only as good as the configured model. `LSD_LLM_PROVIDER` defaults to `anthropic` whether or not it's set; the actual fallback trigger is a missing API key for the resolved provider (`ANTHROPIC_API_KEY` for `anthropic`, `LSD_LLM_API_KEY` for `openai-compat`) — without one, every section (including Gotchas) is a heuristic TODO placeholder. See [`docs/llm-provider.md`](docs/llm-provider.md) for setup and how to configure the key without leaking it (`src/lsd/llm/__init__.py` has the full env-var list).
 
 2. **Regenerate the eval baseline** — the committed `tests/cases/wikipedia-ai-writing/expected/` snapshot predates the `## Gotchas` section, so `lsd eval` now reports a `DIFFER` on `SKILL.md`. Rebuild it with the original model (Inception dLLM `mercury-2`, per HANDOFF.md) and network access, then run `lsd eval tests/cases/wikipedia-ai-writing --init --force` to commit the refreshed baseline.
 
