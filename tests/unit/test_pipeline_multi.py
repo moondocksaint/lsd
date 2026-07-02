@@ -1,19 +1,13 @@
 """Tests for multi-source pipeline (build_multi)."""
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from lsd.models import (
     ConflictReport,
     FetchResult,
-    IngestionMode,
     MultiSourceBuildContext,
     OpportunityMap,
-    SkillCandidate,
-    SourceEntry,
     SourceFit,
 )
 
@@ -41,14 +35,9 @@ def _make_fit() -> SourceFit:
 
 
 def _make_routing(url: str, content: str = "# Hello\n\nWorld."):
-    from lsd.pipeline import Routing
-    return Routing(
-        fetch=_make_fetch(url, content),
-        source_fit=_make_fit(),
-        visual_backend=None,
-        mode="text-first",
-        routing_notes="test",
-    )
+    # prepare() returns a plain 5-tuple:
+    # (fetch_result, source_fit, visual_backend, mode, routing_notes)
+    return (_make_fetch(url, content), _make_fit(), None, "text-first", "test")
 
 
 def _make_empty_conflict_report() -> ConflictReport:

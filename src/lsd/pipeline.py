@@ -2,39 +2,46 @@
 
 Orchestrates: fetch → classify → route → ingest → map → compile → write.
 
-Ponytail fixes:
-  - Routing dataclass removed: it was a single-caller bag of five fields
-    unpacked immediately in build(). prepare() now returns a plain tuple.
-  - estimate_tokens / combined_token_estimate inlined: both were one-liners
-    that didn't justify named functions in retrieval/naive.py.
-  - NaiveRetrievalBackend truncation flag is propagated via RetrievalIndex.was_truncated.
-
-Pre-release fix:
-  - _CHARS_PER_TOKEN moved to lsd.utils (was duplicated here and in retrieval/naive.py).
+Design notes:
+  - ``prepare()`` returns a plain 5-tuple (there is no ``Routing`` dataclass);
+    ``build()`` and ``build_multi()`` unpack it directly.
+  - Token-budget math lives in ``lsd.utils`` (``estimate_tokens`` /
+    ``combined_token_estimate``) so the single-source and multi-source paths,
+    the retrieval backend, and the tests all share one implementation.
+  - ``NaiveRetrievalBackend`` propagates its truncation flag via
+    ``RetrievalIndex.was_truncated`` so the writer/CLI can surface it.
+  - Cross-module dependencies are imported at module scope (not inside
+    ``build_multi``); there is no circular-import reason for them to be local,
+    and module-scope keeps the pipeline's dependency surface visible.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from lsd.backends import get_visual_backend
 from lsd.backends.base import IngestionBackend
 from lsd.classifier import classify
+from lsd.conflict_detector import detect_conflicts
 from lsd.fetcher import fetch
 from lsd.models import (
     BuildContext,
     FetchResult,
+    IndexedSource,
     IngestionMode,
     IngestionResult,
     MultiSourceBuildContext,
     SourceEntry,
     SourceFit,
 )
-from lsd.opportunity_mapper import map_opportunities
+from lsd.normaliser import normalise
+from lsd.opportunity_mapper import map_opportunities, map_opportunities_multi
+from lsd.retrieval import get_retrieval_backend
 from lsd.router import route
-from lsd.utils import CHARS_PER_TOKEN
+from lsd.utils import combined_token_estimate, estimate_tokens
 from lsd.writer import write_package
 
 log = logging.getLogger(__name__)
@@ -81,7 +88,7 @@ def build(
     )
 
     opportunity_map = map_opportunities(source_fit, fetch_result.canonical_url)
-    estimated_tokens = int(len(fetch_result.text) / CHARS_PER_TOKEN)
+    estimated_tokens = estimate_tokens(fetch_result.text)
 
     ctx = BuildContext(
         ingestion=ingestion,
@@ -102,14 +109,6 @@ def build_multi(
     retrieval_backend_name: str | None = None,
     token_threshold: int = DEFAULT_TOKEN_THRESHOLD,
 ) -> MultiSourceBuildContext:
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    from lsd.conflict_detector import detect_conflicts
-    from lsd.models import IndexedSource
-    from lsd.normaliser import normalise
-    from lsd.opportunity_mapper import map_opportunities_multi
-    from lsd.retrieval import get_retrieval_backend
-
     def _process_one(idx_url: tuple[int, str]) -> SourceEntry:
         idx, url = idx_url
         fetch_result, source_fit, _backend, ing_mode, _notes = prepare(url, mode_override)
@@ -143,8 +142,7 @@ def build_multi(
         for e in entries
     ]
 
-    # ponytail: inlined from retrieval/naive.py — both were int(len/3.5) one-liners
-    estimated_tokens = int(sum(len(s.text) for s in indexed) / CHARS_PER_TOKEN)
+    estimated_tokens = combined_token_estimate(indexed)
     if estimated_tokens > token_threshold:
         log.warning(
             "Combined sources are ~%d estimated tokens (threshold: %d). "

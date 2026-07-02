@@ -7,6 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Critical:** `compiler.py` raised `IndentationError` on import (a malformed
+  local `SkillType` import from commit `e5f02c2`), which broke the entire `lsd`
+  package and the whole test suite. Removed the redundant/misindented import.
+- Repaired four test modules left stale by the "ponytail" refactor so the suite
+  is green again (104 passing): tuple-return unpacking in `test_compiler.py`,
+  relocated token-estimator imports in `test_retrieval.py`, `Routing`-removal
+  and patch-target fixes in `test_pipeline_multi.py`, and a mismatched mock URL
+  in `test_fetcher.py`.
+
+### Added
+- **`## Gotchas` section in the compiler pass.** The LLM compiler now emits a
+  fourth grounded section capturing environment-specific facts, API quirks,
+  version/auth/rate-limit constraints, and silent-failure modes — the
+  highest-ROI content in a skill. Neutral note when the source has none; TODO
+  placeholder on the heuristic (no-LLM) path. (`_gotchas_block`,
+  `_parse_optional_section`.)
+- **Drift similarity swap seam.** `cli._content_similarity()` isolates the
+  drift comparison and accepts an injectable `similarity_fn`, so an
+  embedding-backed cosine similarity can replace the lexical `SequenceMatcher`
+  when a low-latency embeddings endpoint is available — without touching the
+  rest of the drift path. Default behaviour unchanged.
+- `estimate_tokens()` / `combined_token_estimate()` in `lsd.utils` — single
+  home for the token-budget math (was duplicated inline in `pipeline.py`).
+- `AGENTS.md` + `CLAUDE.md` (agent working guide and pointer) and `.gitignore`.
+- New tests: Gotchas coverage in `test_compiler.py`; `test_drift.py` for the
+  drift classifier and similarity seam.
+
+### Changed
+- `build_multi()`'s cross-module dependencies are imported at module scope
+  (matching `build()`); there was no circular-import reason for them to be
+  function-local, and it restores the natural `lsd.pipeline.*` patch targets.
+
 ---
 
 ## [0.4.0] — 2026-06-30

@@ -1,5 +1,12 @@
 """Compile a SKILL.md from a BuildContext.
 
+The LLM compiler pass emits four grounded sections — Core principle, Workflow,
+Output format, and Gotchas. Gotchas (environment-specific facts, API quirks,
+version/auth/rate-limit constraints, silent-failure modes) is community-reported
+as the highest-ROI content in a generated skill; the model is prompted to
+extract it from the source only, and a missing/`"none"` answer renders a neutral
+note rather than a placeholder (see _gotchas_block / _parse_optional_section).
+
 Changes in v0.5 (opportunity + audit pass):
   - _render_template: "Related skills" section from OpportunityMap.candidates
   - _render_template: allowed-tools derived from skill type (not hardcoded)
@@ -68,8 +75,7 @@ def compile_skill_multi(
     Ponytail fix: retrieval backend/index are read from ctx attrs set by
     pipeline.build_multi() — no need to re-index here.
     """
-    from lsd.models import SkillType
-from lsd.models import IndexedSource
+    from lsd.models import IndexedSource
     from lsd.retrieval import get_retrieval_backend
 
     backend = llm_backend
@@ -139,7 +145,7 @@ Source content:
 {source_excerpt}
 ---
 
-Write exactly three sections (use these exact headings):
+Write exactly four sections (use these exact headings):
 
 ## Core principle
 [One sentence distilling the source's central, actionable idea. Be specific.]
@@ -150,10 +156,22 @@ Write exactly three sections (use these exact headings):
 ## Output format
 [3-6 bullet fields for output when this skill is used, specific to {skill_type}.]
 
-Return only the three sections. No preamble."""
-    response = backend.complete(system=system, user=user, max_tokens=1024)
+## Gotchas
+[The non-obvious, environment-specific facts an agent must know to avoid failing:
+version or compatibility constraints, required env vars or auth, rate limits,
+API quirks, silent-failure modes, ordering requirements, or easy-to-miss
+preconditions stated in the source. One concise bullet each. Only include facts
+grounded in the source — do not invent. If the source names none, write exactly
+"None identified in the source."]
+
+Return only the four sections. No preamble."""
+    response = backend.complete(system=system, user=user, max_tokens=1200)
     core_principle, workflow, output_format = _parse_llm_sections(response)
-    return _render_template(ctx, core_principle, workflow, output_format, model_id=backend.model_id)
+    gotchas = _parse_optional_section(response, "Gotchas")
+    return _render_template(
+        ctx, core_principle, workflow, output_format,
+        gotchas=gotchas, model_id=backend.model_id,
+    )
 
 
 def _compile_multi_with_llm(ctx, backend, ret_backend, ret_index) -> str:
@@ -202,7 +220,7 @@ Retrieved passages:
 {grounded_context}
 ---
 
-Write exactly three sections:
+Write exactly four sections:
 
 ## Core principle
 [One sentence per source for {skill_type}, citing [Source N].]
@@ -213,10 +231,21 @@ Write exactly three sections:
 ## Output format
 [3-6 bullets for {skill_type} output. Cite sources.]
 
-Return only the three sections."""
-    response = backend.complete(system=system, user=user, max_tokens=1500)
+## Gotchas
+[Non-obvious, environment-specific facts an agent must know to avoid failing:
+version/compatibility constraints, required env vars or auth, rate limits, API
+quirks, silent-failure modes, or easy-to-miss preconditions. One concise bullet
+each, citing [Source N]. Only facts grounded in the sources. If none, write
+exactly "None identified in the sources."]
+
+Return only the four sections."""
+    response = backend.complete(system=system, user=user, max_tokens=1600)
     core_principle, workflow, output_format = _parse_llm_sections(response)
-    return _render_template_multi(ctx, core_principle, workflow, output_format, model_id=backend.model_id)
+    gotchas = _parse_optional_section(response, "Gotchas")
+    return _render_template_multi(
+        ctx, core_principle, workflow, output_format,
+        gotchas=gotchas, model_id=backend.model_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +282,7 @@ def _render_template(
     core_principle: str,
     workflow: str,
     output_format: str,
+    gotchas: str = "",
     model_id: str | None = None,
 ) -> str:
     from lsd import __version__ as lsd_version
@@ -269,6 +299,7 @@ def _render_template(
     caveat_block = _caveat_block(mode, model_id, opp)
     related_block = _related_skills_block(opp)
     tool_block = _tool_candidates_block(opp)
+    gotchas_block = _gotchas_block(gotchas)
 
     metadata_block = (
         f"  lsd_version: \"{lsd_version}\"\n"
@@ -316,6 +347,10 @@ Compiled by LSD from:
 
 {output_format}
 
+## Gotchas
+
+{gotchas_block}
+
 ## Style rule
 
 Be specific and actionable. Prefer direct language over hedged summaries.
@@ -341,6 +376,7 @@ def _render_template_multi(
     core_principle: str,
     workflow: str,
     output_format: str,
+    gotchas: str = "",
     model_id: str | None = None,
 ) -> str:
     from lsd import __version__ as lsd_version
@@ -353,6 +389,7 @@ def _render_template_multi(
     caveat_block = _caveat_block("text-first", model_id, opp)
     related_block = _related_skills_block(opp)
     tool_block = _tool_candidates_block(opp)
+    gotchas_block = _gotchas_block(gotchas)
 
     source_list = "\n".join(f"- Source {e.index}: {e.url}" for e in ctx.sources)
     conflict_section = ""
@@ -402,6 +439,10 @@ Compiled by LSD from {len(ctx.sources)} sources:
 
 {output_format}
 
+## Gotchas
+
+{gotchas_block}
+
 ## Style rule
 
 Be specific and actionable. Cite sources for every claim ([Source N]).
@@ -425,6 +466,14 @@ Surface conflicts rather than silently resolving them.
 # Heuristic / offline fallbacks
 # ---------------------------------------------------------------------------
 
+_HEURISTIC_GOTCHAS = (
+    "<!-- TODO: list environment-specific facts the agent must know — version or "
+    "compatibility constraints, required env vars or auth, rate limits, API quirks, "
+    "and non-obvious preconditions from the source. Configure an LLM provider to "
+    "extract these automatically. -->"
+)
+
+
 def _compile_heuristic(ctx: BuildContext) -> str:
     core = "<!-- TODO: distil the source's central idea into one sentence. -->"
     workflow = (
@@ -438,7 +487,9 @@ def _compile_heuristic(ctx: BuildContext) -> str:
         "Provide structured output with:\n"
         "- Finding or step name\n- Evidence or rationale\n- Recommended action"
     )
-    return _render_template(ctx, core, workflow, output_format, model_id=None)
+    return _render_template(
+        ctx, core, workflow, output_format, gotchas=_HEURISTIC_GOTCHAS, model_id=None,
+    )
 
 
 def _compile_heuristic_multi(ctx: MultiSourceBuildContext) -> str:
@@ -454,7 +505,9 @@ def _compile_heuristic_multi(ctx: MultiSourceBuildContext) -> str:
         "Provide structured output with:\n"
         "- Finding or step name [Source N]\n- Evidence\n- Recommended action"
     )
-    return _render_template_multi(ctx, core, workflow, output_format, model_id=None)
+    return _render_template_multi(
+        ctx, core, workflow, output_format, gotchas=_HEURISTIC_GOTCHAS, model_id=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +553,31 @@ def _caveat_block(mode: str, model_id: str | None, opp: OpportunityMap) -> str:
             "may be incomplete."
         )
     return "\n".join(lines)
+
+
+_NO_GOTCHAS_ANSWERS = {
+    "none", "none identified", "none identified in the source",
+    "none identified in the sources", "n/a", "na", "not applicable",
+}
+
+
+def _gotchas_block(gotchas: str) -> str:
+    """Render the Gotchas section body.
+
+    Gotchas are optional: many sources genuinely have none. When the compiler
+    (LLM or heuristic) produced no content, or the model explicitly answered
+    "none", emit a neutral note rather than a placeholder that looks like a
+    missing-section bug.
+    """
+    text = (gotchas or "").strip()
+    if not text or text.lower().rstrip(". ") in _NO_GOTCHAS_ANSWERS:
+        return (
+            "_No environment-specific gotchas were identified in the source "
+            "material. If you hit one in practice (a version constraint, an auth or "
+            "rate-limit surprise, a silent-failure mode), record it here — this "
+            "section is the highest-value content in a skill._"
+        )
+    return text
 
 
 def _tool_candidates_block(opp: OpportunityMap) -> str:
@@ -577,3 +655,18 @@ def _parse_llm_sections(text: str) -> tuple[str, str, str]:
     workflow = workflow_m.group("workflow").strip() if workflow_m else "<!-- LLM response did not include a workflow -->"
     output = output_m.group("output").strip() if output_m else "<!-- LLM response did not include an output format -->"
     return core, workflow, output
+
+
+def _parse_optional_section(text: str, heading: str) -> str:
+    """Extract an optional named section from an LLM response.
+
+    Unlike the required sections parsed by ``_parse_llm_sections``, a missing
+    optional section returns "" (not a placeholder), so the renderer can decide
+    how to present its absence. Used for the ``## Gotchas`` section, which many
+    sources legitimately have none of.
+    """
+    m = re.search(
+        rf"##\s*{re.escape(heading)}\s*\n(?P<body>.*?)(?=##\s|\Z)",
+        text, re.DOTALL | re.IGNORECASE,
+    )
+    return m.group("body").strip() if m else ""

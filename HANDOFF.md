@@ -9,9 +9,16 @@
 LSD converts URLs into installable, versioned AI skill packages conforming to the [Agent Skills open standard](https://agentskills.io). It ships as a Python CLI (`lsd`), a meta-skill (`skills/lsd-builder/`) that wraps the CLI for conversational use, and a test harness with an eval baseline.
 
 **Current version:** 0.5.0  
-**Current HEAD:** `aaa31a8fdda218e7d5ff636461ab66c5568dac26`  
-**Test suite:** 81 tests passing  
-**Eval baseline:** 14/14 (Wikipedia AI-writing case, mercury-2, Inception dLLM)
+**Test suite:** 104 tests passing (see *Post-handoff maintenance* below; the
+earlier "81 passing" predated added tests and a build-breaking regression)  
+**Eval baseline:** 14/14 (Wikipedia AI-writing case, mercury-2, Inception dLLM).
+Note: the committed `expected/` snapshot predates the `## Gotchas` section, so
+`lsd eval` will now report a `DIFFER` on `SKILL.md` until the baseline is
+regenerated.
+
+> **Read this first.** The sections below are the original decision log written
+> at handoff. For what changed *after* handoff — including a critical fix — see
+> [Post-handoff maintenance](#post-handoff-maintenance) at the end.
 
 ---
 
@@ -249,3 +256,70 @@ All three bugs discovered in the final audit were closed in commit `db126dec`:
 ## Provenance of this document
 
 Written by Perplexity Computer (model: claude-sonnet-4-6) in the same session that produced v0.5.0, as part of the "prime-time readiness" review. The session thread is preserved in the project owner's Perplexity history at the canonical thread URL recorded in PROVENANCE.md.
+
+---
+
+## Post-handoff maintenance
+
+Changes made after this document was written, during a repo review pass.
+
+### Critical fix — the package did not import
+
+A refactor commit (`e5f02c2`, "6 modularity fixes") added
+`from lsd.models import SkillType` inside `compile_skill_multi()` but mis-indented
+the following line, producing an `IndentationError`. `SkillType` was already
+imported at module scope and unused inside the function, so the whole `lsd`
+package failed to import — every CLI command and the entire test suite were
+broken despite docs claiming a green build. Fix: removed the redundant/malformed
+local import. **Lesson:** run `pytest -q` (or at least `python -m compileall
+src/lsd`) before committing; the suite catches this instantly.
+
+### Stale tests repaired (green: 104 passing)
+
+The same refactor left four test modules out of sync with the code they cover:
+
+- `test_compiler.py` — treated `compile_skill()` as returning a string; it
+  returns `(content, model_id)`. Tests now unpack the tuple.
+- `test_retrieval.py` — imported `estimate_tokens` / `combined_token_estimate`
+  from `retrieval/naive.py`, which the refactor deleted. Those helpers now live
+  in `lsd.utils` (their proper single-source home; the "inlined" version had
+  duplicated the math in `pipeline.py`), and the test imports them from there.
+- `test_pipeline_multi.py` — referenced the removed `Routing` dataclass and
+  patched `lsd.pipeline.*` names the refactor had pushed into function-local
+  imports. `build_multi`'s cross-module deps are now imported at module scope
+  (matching `build()`), and the helper returns the plain 5-tuple `prepare()`
+  actually produces.
+- `test_fetcher.py::test_login_redirect_raises_lsd_error` — registered its
+  `httpx` mock for a different URL than `fetch()` requested; corrected.
+
+### (a) `## Gotchas` section added to the compiler
+
+The LLM compiler pass now emits a fourth grounded section — `## Gotchas` —
+capturing environment-specific facts, API quirks, version/auth/rate-limit
+constraints, and silent-failure modes. Community data flags this as the
+highest-ROI content in a skill. A missing or `"none"` answer renders a neutral
+note rather than a placeholder that looks like a bug (`_gotchas_block`,
+`_parse_optional_section`). Covered by new tests in `test_compiler.py`.
+
+### (b) Semantic-drift similarity — seam, not implementation
+
+The throwaway note about swapping `SequenceMatcher` for embedding cosine
+distance is a *correct but conditional* gap: no embedding API is wired into any
+LSD backend (the LLM backends expose only `complete()`; retrieval is lexical),
+and `scripts/check-drift.py` is intentionally `httpx`-only. Implementing a live
+embedding call would need a provider + key + network and would break the
+standalone drift checker. Instead, the similarity computation is isolated in
+`cli._content_similarity(old_lines, new_lines, similarity_fn=None)` — the single,
+now-tested swap point. Default behaviour is unchanged (lexical). When an
+embeddings endpoint exists, inject an embedding-backed `similarity_fn`; if
+several strategies emerge, graduate it to a `SimilarityBackend` ABC + registry
+like `lsd.retrieval`. New coverage in `test_drift.py`.
+
+### Repo hygiene
+
+Added `.gitignore` (the editable install was dropping untracked `*.egg-info/`
+and `__pycache__/`), `AGENTS.md` (full agent working guide) and `CLAUDE.md`
+(pointer to it).
+
+*Recorded by the repo-review pass on the `claude/link-skill-converter-review`
+branch.*
