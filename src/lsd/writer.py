@@ -6,12 +6,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-_SCRIPTS_DIR = Path(__file__).parent / "scripts"
-
 from lsd import __version__ as lsd_version
 from lsd.compiler import compile_skill, compile_skill_multi
 from lsd.models import BuildContext, MultiSourceBuildContext
 from lsd.normaliser import content_hash, normalise
+
+_SCRIPTS_DIR = Path(__file__).parent / "scripts"
 
 
 def write_package(ctx: BuildContext) -> Path:
@@ -135,9 +135,8 @@ def write_multi_package(ctx: MultiSourceBuildContext) -> Path:
     opp = ctx.combined_opportunities
     (out / "skill-opportunities.md").write_text(_opportunities_md(opp), encoding="utf-8")
 
-    # Compile SKILL.md — retrieval backend may be pre-attached by build_multi()
-    ret_backend = getattr(ctx, "_retrieval_backend", None)
-    ret_index = getattr(ctx, "_retrieval_index", None)
+    # Compile SKILL.md — compile_skill_multi() reads the retrieval backend/index
+    # off ctx (pre-attached by build_multi), so we don't thread them here.
     skill_content, compiler_model = compile_skill_multi(ctx)
     (out / "SKILL.md").write_text(skill_content, encoding="utf-8")
 

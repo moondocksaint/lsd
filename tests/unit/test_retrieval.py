@@ -6,12 +6,8 @@ import pytest
 from lsd.models import IndexedSource, Passage, RetrievalIndex
 from lsd.retrieval import get_retrieval_backend
 from lsd.retrieval.base import RetrievalBackend
-from lsd.retrieval.naive import (
-    NaiveRetrievalBackend,
-    combined_token_estimate,
-    estimate_tokens,
-    DEFAULT_TOKEN_THRESHOLD,
-)
+from lsd.retrieval.naive import NaiveRetrievalBackend
+from lsd.utils import combined_token_estimate, estimate_tokens
 
 
 # ---------------------------------------------------------------------------

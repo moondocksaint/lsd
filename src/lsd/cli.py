@@ -15,7 +15,7 @@ import json
 import re
 import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import click
 from rich.console import Console
@@ -519,13 +519,13 @@ def _check_package(package_dir: Path, url_override: Optional[str] = None) -> Non
             pass  # already clear from table
         elif state == "MINOR":
             console.print(
-                f"\n[yellow]Minor change detected.[/yellow] "
+                "\n[yellow]Minor change detected.[/yellow] "
                 "Content has changed but structure is intact. "
                 "Consider rebuilding: [bold]lsd build <url> --output <package-dir>[/bold]"
             )
         elif state == "SUBSTANTIAL":
             console.print(
-                f"\n[bold red]Substantial change detected.[/bold red] "
+                "\n[bold red]Substantial change detected.[/bold red] "
                 "The source has been significantly rewritten. "
                 "The original motivation for this skill may no longer apply. "
                 "Review the source before rebuilding. "
@@ -533,7 +533,7 @@ def _check_package(package_dir: Path, url_override: Optional[str] = None) -> Non
             )
         elif state == "GONE":
             console.print(
-                f"\n[red]Source URL is unreachable.[/red] "
+                "\n[red]Source URL is unreachable.[/red] "
                 "The existing package is preserved. "
                 "Check source-policy.md for the fallback chain."
             )
@@ -627,12 +627,11 @@ def _classify_magnitude(
         new_words < 200    → SUBSTANTIAL  (likely truncation or gate)
         otherwise          → MINOR
 
-    Swap-candidate: replace with an embedding-based semantic similarity when a
-    low-latency embedding API is available in the LSD environment — semantic
-    drift (same words, different meaning) is invisible to both modes above.
+    Semantic drift (same words, reorganised meaning) is invisible to the
+    lexical similarity used below. The swap point is _content_similarity();
+    see its docstring for how to plug in an embedding-based cosine similarity
+    once a low-latency embeddings endpoint is available.
     """
-    import difflib
-
     new_words = len(new_normalised.split())
     new_headings = set(re.findall(r"^#{1,3}\s+(.+)$", new_normalised, re.MULTILINE))
 
@@ -647,7 +646,7 @@ def _classify_magnitude(
         # before diffing so timestamps / word-count lines don't skew the score)
         old_lines = _content_lines(old_normalised)
         new_lines = _content_lines(new_normalised)
-        ratio = difflib.SequenceMatcher(None, old_lines, new_lines).ratio()
+        ratio = _content_similarity(old_lines, new_lines)
 
         # Word-count ratio
         word_ratio = new_words / old_words if old_words else 1.0
@@ -701,6 +700,40 @@ def _classify_magnitude(
         f"Content changed, {new_words:,} words{heading_note} "
         "(no stored source.md — proxy estimate only)",
     )
+
+
+def _content_similarity(
+    old_lines: list[str],
+    new_lines: list[str],
+    similarity_fn: Callable[[list[str], list[str]], float] | None = None,
+) -> float:
+    """Return a 0..1 similarity between two normalised content line-lists.
+
+    This is the single swap point for drift similarity. The default is a
+    lexical ratio (``difflib.SequenceMatcher``): fast, dependency-free, and
+    reproducible — but blind to *semantic drift*. A page that keeps the same
+    words while reorganising their meaning scores as highly similar here even
+    though the skill built from it may no longer be correct.
+
+    To close that gap, pass a semantic ``similarity_fn`` that embeds both
+    line-lists and returns their cosine similarity. LSD does not ship one yet,
+    by design, not oversight:
+
+      * No embedding API is wired into any backend — the LLM backends expose
+        only ``complete()`` and the retrieval backend is lexical.
+      * The standalone ``scripts/check-drift.py`` is intentionally limited to
+        ``httpx`` + ``bs4`` so it runs with ``uv run`` and no ``lsd`` install;
+        an embedding call would break that contract there.
+
+    When a low-latency embeddings endpoint becomes available, implement it as
+    an embedding-backed ``similarity_fn`` and pass it in — nothing else in the
+    drift path changes. If several strategies emerge, graduate this into a
+    ``SimilarityBackend`` ABC + registry mirroring ``lsd.retrieval``.
+    """
+    if similarity_fn is not None:
+        return similarity_fn(old_lines, new_lines)
+    import difflib
+    return difflib.SequenceMatcher(None, old_lines, new_lines).ratio()
 
 
 def _content_lines(normalised: str) -> list[str]:

@@ -159,17 +159,16 @@ def test_gated_page_401_raises_lsd_error(httpx_mock: HTTPXMock):
 
 
 def test_login_redirect_raises_lsd_error(httpx_mock: HTTPXMock):
-    # Simulate a redirect to a login page on the same host
+    # pytest-httpx doesn't support redirect chains natively, so we test the
+    # login-path detection logic directly via a URL that already contains the
+    # login signal in its path. The mock must respond to the URL that fetch()
+    # actually requests.
     httpx_mock.add_response(
-        url="https://example.com/protected",
+        url="https://example.com/login?next=/protected",
         status_code=200,
         headers={"content-type": "text/html"},
         text=HTML_LOGIN,
     )
-    # We simulate the redirect outcome by patching the canonical URL:
-    # pytest-httpx doesn't support redirect chains natively, so we test
-    # the login-path detection logic directly via a URL that already
-    # contains the login signal.
     with pytest.raises(LSDError, match="login|authentication"):
         fetch("https://example.com/login?next=/protected")
 

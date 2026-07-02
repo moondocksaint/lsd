@@ -77,7 +77,7 @@ The Anthropic [`skill-creator`](https://github.com/anthropics/skills/tree/main/s
 | Test cases | `evals/evals.json` with assertions, parallel with/without-skill runs | `tests/cases/` with `input.json` + `expected/` snapshot | LSD uses pytest-style unit tests throughout |
 | Packaging | `package_skill.py` → `.skill` file | `lsd package --zip` → ZIP with inner folder named by slug | Both produce installable archives; format differs by target client |
 | Source grounding | "Extract from hands-on task" / synthesize from artifacts | URL fetch + normalise pipeline | LSD automates the extraction step |
-| "Gotchas" section | Recommended as highest-value content | Present in meta-skill (drift playbook, verdict playbook); **absent from generated SKILL.md** | Generated skills do not have a `## Gotchas` section — a future quality improvement |
+| "Gotchas" section | Recommended as highest-value content | Present in meta-skill (drift playbook, verdict playbook) **and generated SKILL.md** — the LLM compiler emits a `## Gotchas` section (env-specific facts, API quirks, version/auth/rate-limit constraints) | **Adopted** |
 
 These are by-design differences stemming from LSD's identity as a CLI build tool rather than a conversational skill assistant.
 
@@ -104,7 +104,7 @@ The following items are structurally unresolvable — they arise from the archit
 | PixelRAG backend is a stub | `src/lsd/backends/pixelrag.py` wraps the `pixelrag-render` package, which has not been publicly released. Visual-first ingestion falls back to text-first automatically. |
 | `lsd eval` requires a committed `expected/` snapshot | The first baseline must be created manually (or by running a trusted build and committing the output). There is no `--init` command yet. |
 | `skills-ref validate` is an external CLI | Validation is referenced in SKILL.md and docs but is not run by LSD itself during build. Users must install and run it separately. |
-| Generated SKILL.md has no `## Gotchas` section | Community data shows Gotchas sections are the highest-value content for environment-specific facts. LSD does not generate them; adding this to the compiler is a near-term improvement. |
+| Gotchas quality depends on the LLM provider | The compiler now emits a `## Gotchas` section, but its content is only as good as the configured model. With no LLM provider, the section is a TODO placeholder like the other heuristic sections. |
 | No web product | ROADMAP.md describes a hosted web product; it does not exist yet. |
 | No marketplace listing support | ROADMAP.md describes marketplace integration; not implemented. |
 
@@ -116,13 +116,16 @@ These are the most valuable near-term investments, ordered by impact-to-effort r
 
 ### High impact
 
-1. **Add a `## Gotchas` section to the compiler** — The LLM compiler pass should extract environment-specific facts, API quirks, and non-obvious constraints from the source and emit them as a `## Gotchas` block in the generated `SKILL.md`. Community data consistently identifies this as the highest-ROI content in a skill.
+1. **Activate `skills-ref validate` in the build pipeline** — `skills-ref` is already a dev dependency and its Python API (`skills_ref.validate(package_dir)`) works today. Run it as an optional post-build check and surface warnings in the CLI output. This closes the gap between "we document spec compliance" and "we enforce it automatically." (Confirmed: generated packages pass validation once the directory is named after the skill slug.)
 
-2. **Activate `skills-ref validate` in the build pipeline** — Run the validator as a post-build subprocess call and surface warnings in the CLI output. This closes the gap between "we document spec compliance" and "we enforce it automatically."
+2. **Add `lsd eval --init`** — Run a build and commit the output as the `expected/` snapshot. This removes the manual step that blocks first-time eval setup.
 
-3. **Add `lsd eval --init`** — Run a build and commit the output as the `expected/` snapshot. This removes the manual step that blocks first-time eval setup.
+3. **PixelRAG backend** — When `pixelrag-render` becomes publicly available, wire it into the existing `PixelRAGBackend` adapter. The interface is already in place; only the import and method implementations need to be activated.
 
-4. **PixelRAG backend** — When `pixelrag-render` becomes publicly available, wire it into the existing `PixelRAGBackend` adapter. The interface is already in place; only the import and method implementations need to be activated.
+> **Done:** *Add a `## Gotchas` section to the compiler* — the LLM compiler pass
+> now extracts environment-specific facts, API quirks, and non-obvious
+> constraints and emits them as a `## Gotchas` block in the generated
+> `SKILL.md`. See `compiler.py` (`_gotchas_block`, `_parse_optional_section`).
 
 ### Medium impact
 
@@ -131,6 +134,8 @@ These are the most valuable near-term investments, ordered by impact-to-effort r
 6. **`lsd check` CI integration example** — Add a GitHub Actions workflow in `.github/workflows/` that runs `lsd check` on a configured package directory and opens an issue on SUBSTANTIAL drift. This completes the maintenance story.
 
 7. **Retrieval backend upgrade** — The `NaiveRetrievalBackend` (full-context stuffing with 50K token guard) is functional but basic. When a higher-quality embedding or chunking approach is available, the `RetrievalBackend` ABC makes it a drop-in swap. The swap criteria are documented in ROADMAP.md and SKILL.md.
+
+8. **Semantic-drift similarity** — `lsd check` compares sources with a lexical `SequenceMatcher` ratio, which is blind to *semantic drift* (same words, reorganised meaning). The swap point is isolated in `cli._content_similarity`, which accepts an injectable `similarity_fn`. When a low-latency embeddings endpoint is available, pass an embedding-backed cosine `similarity_fn` there — no other part of the drift path changes. LSD ships no embedding backend today (none of the LLM backends expose embeddings, and the standalone `scripts/check-drift.py` is deliberately `httpx`-only).
 
 ### Longer term (from ROADMAP.md)
 

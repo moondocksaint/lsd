@@ -1,21 +1,44 @@
 """Shared utilities for LSD.
 
-Ponytail fix: _slugify_name (compiler.py) and _slugify (cli.py) were two
-slightly different implementations of the same slug logic. Canonical version
-lives here; both callers import from lsd.utils.
+Canonical home for helpers that would otherwise be duplicated across modules:
 
-Pre-release fix: _CHARS_PER_TOKEN was duplicated in pipeline.py and
-retrieval/naive.py. Canonical constant lives here; both import from lsd.utils.
+  - ``slugify``            — one slug implementation used by both compiler.py
+                             and cli.py.
+  - ``CHARS_PER_TOKEN``    — one chars-per-token constant used by the pipeline
+                             and the retrieval backend.
+  - ``estimate_tokens`` /
+    ``combined_token_estimate`` — one token-budget estimator used by the
+                             single-source path, the multi-source path, and
+                             the retrieval token-threshold checks.
 """
 
 from __future__ import annotations
 
 import re
+from typing import Iterable, Protocol
 
 # Rough chars-per-token estimate for budget calculations.
-# ponytail: single source of truth — was duplicated in pipeline.py and
-# retrieval/naive.py. Update here if calibration changes.
+# Single source of truth — update here if calibration changes.
 CHARS_PER_TOKEN: float = 3.5
+
+
+class _HasText(Protocol):
+    text: str
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token count for a string (``len(text) / CHARS_PER_TOKEN``)."""
+    return int(len(text) / CHARS_PER_TOKEN)
+
+
+def combined_token_estimate(sources: Iterable[_HasText]) -> int:
+    """Estimated token count across objects exposing a ``.text`` attribute.
+
+    Sums the character lengths first, then divides once, so the result matches
+    ``estimate_tokens`` on the concatenated text rather than accumulating
+    per-source rounding error.
+    """
+    return int(sum(len(s.text) for s in sources) / CHARS_PER_TOKEN)
 
 
 def slugify(text: str, max_len: int = 60) -> str:
