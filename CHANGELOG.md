@@ -11,6 +11,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **CI green gate** (`.github/workflows/ci.yml`) — runs `ruff check`, `mypy --strict`,
   and `pytest -q` on every push to `main` and every pull request, so a commit that
   fails the suite can no longer reach `main` while docs claim it is green.
+- **MCP server scaffold** (Phase 2) — when the opportunity mapper flags an `mcp_server`
+  tool candidate, `lsd build` now emits a minimal, runnable stub under `mcp-server/`
+  (`server.py` using `FastMCP`, `requirements.txt`, `README.md`) grounded in the source
+  URL and the candidate's rationale, instead of only naming the opportunity in
+  `skill-opportunities.md`. Deterministic output; `metadata.json → artifacts.mcp_scaffold`
+  records it. See `writer._write_mcp_scaffold`; covered by `tests/unit/test_writer.py`.
 
 ### Docs
 - **Folded a sequenced execution plan into `ROADMAP.md` § Execution plan** — phases the

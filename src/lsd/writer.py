@@ -9,8 +9,15 @@ from typing import Any
 
 from lsd import __version__ as lsd_version
 from lsd.compiler import compile_skill, compile_skill_multi
-from lsd.models import BuildContext, MultiSourceBuildContext, OpportunityMap, SourceFit
+from lsd.models import (
+    BuildContext,
+    MultiSourceBuildContext,
+    OpportunityMap,
+    SourceFit,
+    ToolCandidate,
+)
 from lsd.normaliser import content_hash, normalise
+from lsd.utils import slugify
 
 _SCRIPTS_DIR = Path(__file__).parent / "scripts"
 
@@ -71,6 +78,9 @@ def write_package(ctx: BuildContext) -> Path:
     scripts_dir = out / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     _copy_scripts(scripts_dir)
+
+    # mcp-server/ — scaffold a stub when the mapper flagged an mcp_server candidate
+    _write_mcp_scaffold(out, opp, fetch.canonical_url, fetch.title)
 
     return out
 
@@ -172,6 +182,10 @@ def write_multi_package(ctx: MultiSourceBuildContext) -> Path:
     scripts_dir = out / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     _copy_scripts(scripts_dir)
+
+    # mcp-server/ — scaffold a stub when the mapper flagged an mcp_server candidate
+    first_url = ctx.sources[0].url if ctx.sources else ""
+    _write_mcp_scaffold(out, opp, first_url, first_url)
 
     return out
 
@@ -552,6 +566,7 @@ def _build_metadata(
             "changelog_file": "CHANGELOG.md",
             "scripts": ["scripts/check-drift.py", "scripts/motivation-check.py"],
             "visual_files": visual_artifacts,
+            "mcp_scaffold": "mcp-server/" if _first_mcp_candidate(opp) else None,
         },
     }
 
@@ -631,6 +646,7 @@ def _build_metadata_multi(
             "opportunity_map_file": "skill-opportunities.md",
             "metadata_file": "metadata.json",
             "scripts": ["scripts/check-drift.py", "scripts/motivation-check.py"],
+            "mcp_scaffold": "mcp-server/" if _first_mcp_candidate(opp) else None,
         },
     }
 
@@ -742,6 +758,12 @@ def _opportunities_md(opp: OpportunityMap) -> str:
             lines.append(f"- Why: {tc.why_fit}")
             if tc.needed_extras:
                 lines.append(f"- Needed extras: {', '.join(tc.needed_extras)}")
+            if tc.tool_type == "mcp_server":
+                lines.append(
+                    "- Scaffolded: a runnable MCP server stub is in "
+                    "[`mcp-server/`](mcp-server/README.md) — replace the example "
+                    "tool with the real capabilities, then run it."
+                )
             lines.append("")
 
     return "\n".join(lines)
@@ -840,3 +862,103 @@ def _copy_scripts(scripts_dir: Path) -> None:
                 "Run: pip install lsd and use the lsd CLI.\n",
                 encoding="utf-8",
             )
+
+
+# ---------------------------------------------------------------------------
+# MCP server scaffold
+# ---------------------------------------------------------------------------
+#
+# The opportunity mapper flags an `mcp_server` ToolCandidate when a source
+# describes live capabilities that a static skill cannot provide (see
+# opportunity_mapper._detect / ToolCandidate in models.py). Rather than only
+# naming that opportunity in skill-opportunities.md, emit a minimal, runnable
+# starting point under `mcp-server/`. Content is deterministic (no timestamps)
+# so eval baselines and unit tests stay stable.
+
+_MCP_SERVER_PY = '''\
+"""Minimal MCP server stub scaffolded by LSD.
+
+Source: {url}
+
+This is a starting point, not a finished server. Replace the example_tool stub
+below with the real capabilities the source describes — one @mcp.tool() function
+per capability — then run it with any MCP-compatible client. See README.md.
+"""
+
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("{name}")
+
+
+@mcp.tool()
+def example_tool(query: str) -> str:
+    """TODO: replace with a real tool derived from the source.
+
+    {description}
+    """
+    raise NotImplementedError("Scaffolded by LSD — implement this tool.")
+
+
+if __name__ == "__main__":
+    mcp.run()
+'''
+
+_MCP_README = '''\
+# MCP server scaffold
+
+LSD detected that this source describes live capabilities better served by a
+**Model Context Protocol (MCP) server** than by a static skill, so it scaffolded
+this minimal starting point. It is intentionally incomplete.
+
+- **Source:** {url}
+- **Why a tool, not (only) a skill:** {why_not_skill}
+
+## Fill it in
+
+1. Open `server.py` and replace the `example_tool` stub with the real tools the
+   source describes (one `@mcp.tool()` function per capability).
+2. Add any dependencies to `requirements.txt`.
+
+## Run
+
+    pip install -r requirements.txt
+    python server.py
+
+MCP quickstart: {reference}
+'''
+
+
+def _first_mcp_candidate(opp: OpportunityMap) -> ToolCandidate | None:
+    """Return the first `mcp_server` tool candidate the mapper detected, if any."""
+    for tc in opp.tool_candidates:
+        if tc.tool_type == "mcp_server":
+            return tc
+    return None
+
+
+def _write_mcp_scaffold(out: Path, opp: OpportunityMap, source_url: str, title: str) -> bool:
+    """Scaffold a minimal MCP server stub when an `mcp_server` candidate exists.
+
+    Writes `mcp-server/{server.py,requirements.txt,README.md}` and returns True;
+    returns False (writing nothing) when the mapper flagged no mcp_server
+    candidate. Kept deterministic so committed eval baselines don't churn.
+    """
+    tc = _first_mcp_candidate(opp)
+    if tc is None:
+        return False
+
+    server_dir = out / "mcp-server"
+    server_dir.mkdir(parents=True, exist_ok=True)
+    name = slugify(title or "mcp server") or "mcp-server"
+    reference = tc.reference_url or "https://modelcontextprotocol.io/quickstart/server"
+
+    (server_dir / "server.py").write_text(
+        _MCP_SERVER_PY.format(name=name, url=source_url, description=tc.description),
+        encoding="utf-8",
+    )
+    (server_dir / "requirements.txt").write_text("mcp>=1.0\n", encoding="utf-8")
+    (server_dir / "README.md").write_text(
+        _MCP_README.format(url=source_url, why_not_skill=tc.why_not_skill, reference=reference),
+        encoding="utf-8",
+    )
+    return True

@@ -349,9 +349,10 @@ records the rationale behind past decisions.
 - **Description optimizer** — the meta-skill generates descriptions from source intent.
   Running the Anthropic `skill-creator`'s `run_loop.py`-style trigger optimization on
   generated descriptions would likely improve agent recall.
-- **MCP server scaffold** — when the opportunity mapper detects an `mcp_server` tool
-  candidate, offer to scaffold a minimal MCP server stub instead of just describing the
-  opportunity in `skill-opportunities.md`.
+
+*(Done: **MCP server scaffold** — `lsd build` now scaffolds a runnable stub under
+`mcp-server/` when an `mcp_server` candidate is detected. See `writer._write_mcp_scaffold`
+and CHANGELOG.md `[Unreleased]`.)*
 
 ---
 
@@ -385,7 +386,8 @@ what the CI gate in Phase 1 exists to prevent.
 ### Phase 2 — Improve the reconciled codebase (no external blocker)
 
 4. **Description optimizer** (§ Backlog).
-5. **MCP server scaffold** (§ Backlog).
+5. **MCP server scaffold** ✅ — `lsd build` scaffolds a runnable stub under `mcp-server/`
+   when an `mcp_server` candidate is detected (`writer._write_mcp_scaffold`).
 6. **Expand the eval case set** (§ Backlog) using a *stable, fetchable* source — avoid
    live pages whose content drifts and makes a committed baseline flaky.
 
