@@ -150,6 +150,43 @@ not free, so let the suite catch it.
   patches `lsd.pipeline.*` names, so cross-module deps used by `build_multi` are
   imported at module scope (keep them there).
 
+## Documentation maintenance
+
+This repo has five docs with distinct, enforced jobs. Blurring them is how this
+repo ended up with the same "four rounds of work" narrative duplicated across
+three files at once (see HANDOFF.md's and PROVENANCE.md's own scope notes) —
+don't repeat that.
+
+| File | Job | Update when |
+|------|-----|-------------|
+| `CHANGELOG.md` | *What* changed, in full, keyed by version (`[Unreleased]` until released) | Every commit that changes behavior, adds a feature, or fixes a bug |
+| `HANDOFF.md` | *Why* things are built this way — numbered decisions with rationale, plus a bugs-resolved table | Every decision a future contributor might question or re-litigate; every non-trivial bug (root cause + fix, as a bugs-table row) |
+| `PROVENANCE.md` | *Who/when* — which session/commits built what, terse, one line per round, no rationale | Once per session (or logical unit of work) — not per commit |
+| `README.md` § Suggested next steps | Near-term actionable items, including anything blocked only on LLM/model access | A gap opens or closes that doesn't need architecture work |
+| `ROADMAP.md` § Open gaps for the next contributor | Items blocked on an external dependency/upstream release, plus unscheduled backlog | A gap opens or closes that's architectural or dependency-blocked |
+
+**Before considering a coding session done, work through this checklist:**
+
+1. Add a `CHANGELOG.md` entry under `[Unreleased]` for what changed.
+2. If the change involved a non-obvious design decision or fixed a bug: add it
+   to `HANDOFF.md` as a new numbered decision (continue the existing sequence —
+   don't restart numbering or start a new narrative "what happened this
+   session" section) or a bugs-table row.
+3. Add or extend a `PROVENANCE.md` entry for the session: one row/bullet per
+   commit or logical round, pointing to `HANDOFF.md` for rationale and
+   `CHANGELOG.md` for detail. Keep it terse — if you're writing more than a
+   line of "why," it belongs in `HANDOFF.md` instead.
+4. If a suggested-next-step opened or closed, update `README.md` § Suggested
+   next steps or `ROADMAP.md` § Open gaps (whichever applies) — remove items
+   once done rather than letting a stale TODO contradict a later section in
+   the same file (this repo has done that too — see HANDOFF.md's now-trimmed
+   "Suggestions" section).
+5. **Verify every new or changed factual claim against the actual code before
+   calling the docs done** — grep for the referenced function/file, run the
+   test suite, check a quoted count or line number. Don't assert from memory;
+   a docs pass that isn't checked against the code it describes is exactly how
+   the staleness above accumulated in the first place.
+
 ## Where the real gaps are (see README "Suggested next steps" for detail)
 
 Working today: the full build/check/package/eval flow, spec validation wired
