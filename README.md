@@ -1,5 +1,8 @@
 # LSD — Link-to-Skill Designer
 
+> **Archived — this branch was merged into `main`. It now exists only for record purposes.**
+> `main` is the single source of truth; this branch will be deleted once there is a stable build ready to share.
+
 > Turn any webpage into a reusable Claude skill.
 
 LSD is a meta-skill builder. Give it a URL. It reads the page, classifies what kind of skill the page supports, chooses the right ingestion mode (text-first, hybrid, or visual-first), extracts and normalises the source, generates a complete skill package, and wires up source-dependency tracking so the skill can be refreshed when the page changes.
