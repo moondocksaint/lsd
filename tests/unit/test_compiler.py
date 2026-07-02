@@ -190,3 +190,21 @@ def test_malformed_llm_response_uses_placeholder_for_missing_sections(tmp_path):
     assert "Only check the most recent source." in result
     # Missing sections should get placeholder comments
     assert "LLM response did not include" in result
+
+
+def test_allowed_tools_accepts_valid_skill_types():
+    from lsd.compiler import _allowed_tools_for_skill_type
+    # All known SkillType values should return a non-empty string without error
+    valid_types = [
+        "reviewer", "rewriter", "reference_companion", "semantic_reference",
+        "data_pipeline", "mcp_server", "function_tool", "api_wrapper",
+        "workflow_coach", "integration_planner", "ingestion_advisor",
+    ]
+    for st in valid_types:
+        result = _allowed_tools_for_skill_type(st)  # type: ignore[arg-type]
+        assert isinstance(result, str) and len(result) > 0, f"empty result for {st!r}"
+
+
+def test_skill_type_literal_importable():
+    from lsd.models import SkillType  # noqa: F401 — just assert importable
+    assert SkillType is not None

@@ -56,12 +56,12 @@ def content_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-def fetch_text(url: str) -> tuple[str, int, str]:
+def fetch_text(url: str, user_agent: str = "lsd-drift-checker/unknown") -> tuple[str, int, str]:
     """Fetch URL, return (body_text, http_status, final_url)."""
     try:
         resp = httpx.get(
             url,
-            headers={"User-Agent": "lsd-drift-checker/0.5.0"},
+            headers={"User-Agent": user_agent},
             timeout=30,
             follow_redirects=True,
         )
@@ -132,6 +132,9 @@ def main() -> int:
         print(f"ERROR: Could not read metadata.json: {exc}", file=sys.stderr)
         return 3
 
+    _lsd_ver = meta.get("package", {}).get("lsd_version", "unknown")
+    _user_agent = f"lsd-drift-checker/{_lsd_ver}"
+
     # Collect source dependencies — single or multi
     deps: list[dict] = []
     if "source_dependency" in meta:
@@ -160,7 +163,7 @@ def main() -> int:
         idx = dep.get("index", "")
         label = f"Source {idx}" if idx else url[:60]
 
-        body, status, final_url = fetch_text(url)
+        body, status, final_url = fetch_text(url, _user_agent)
         state, note = classify_drift(stored_hash, body, status, url, final_url)
 
         result = {

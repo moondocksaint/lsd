@@ -17,6 +17,21 @@ from typing import Literal
 
 SourceType = Literal["html", "pdf", "image", "google_doc", "social", "gated", "unsupported"]
 
+SkillType = Literal[
+    "reviewer",
+    "rewriter",
+    "reference_companion",
+    "semantic_reference",
+    "data_pipeline",
+    "mcp_server",
+    "function_tool",
+    "api_wrapper",
+    "workflow_coach",
+    "integration_planner",
+    "ingestion_advisor",
+]
+
+
 
 @dataclass
 class FetchResult:
@@ -70,7 +85,7 @@ class SourceFit:
 @dataclass
 class SkillCandidate:
     """A candidate skill type from the opportunity map."""
-    type: str
+    type: SkillType
     confidence: Literal["high", "medium", "low"]
     build_timing: Literal["now", "later", "defer"]
     why_fit: str
@@ -191,6 +206,7 @@ class BuildContext:
     output_dir: Path
     generated_at: str = ""          # ISO 8601, set by writer
     estimated_tokens: int = 0       # set by pipeline if available
+    skill_license: str | None = None  # ponytail: None = omit license field; set via --license flag
 
 
 @dataclass
@@ -235,6 +251,7 @@ class MultiSourceBuildContext:
     conflict_report: ConflictReport
     combined_opportunities: OpportunityMap
     estimated_tokens: int = 0       # combined token estimate from pipeline
+    skill_license: str | None = None  # ponytail: None = omit license field; set via --license flag
 
 
 # ---------------------------------------------------------------------------

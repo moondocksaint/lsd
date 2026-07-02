@@ -23,6 +23,7 @@ import logging
 import re
 
 from lsd.llm.base import LLMBackend
+from lsd.models import SkillType
 from lsd.models import BuildContext, MultiSourceBuildContext, OpportunityMap
 from lsd.utils import slugify
 
@@ -67,7 +68,8 @@ def compile_skill_multi(
     Ponytail fix: retrieval backend/index are read from ctx attrs set by
     pipeline.build_multi() — no need to re-index here.
     """
-    from lsd.models import IndexedSource
+    from lsd.models import SkillType
+from lsd.models import IndexedSource
     from lsd.retrieval import get_retrieval_backend
 
     backend = llm_backend
@@ -221,7 +223,7 @@ Return only the three sections."""
 # Template renderers
 # ---------------------------------------------------------------------------
 
-def _allowed_tools_for_skill_type(skill_type: str) -> str:
+def _allowed_tools_for_skill_type(skill_type: SkillType) -> str:
     """Return a space-separated allowed-tools string appropriate for the skill type.
 
     Rules (agentskills spec: space-separated tool name patterns):
@@ -278,14 +280,14 @@ def _render_template(
         f"  skill_fit_verdict: \"{opp.assessment.skill_fit_verdict if opp.assessment else 'unknown'}\""
     )
 
+    license_line = f"license: {ctx.skill_license}\n" if ctx.skill_license else ""
     return f"""---
 name: {name}
 description: >-
   Use this skill when working with content derived from: {fetch.title}.
   Skill type: {skill_type_display}. Trigger phrases: {skill_type_display.lower()},
   review with {skill_type.replace('_', ' ')}, apply {name}.
-license: Apache-2.0
-allowed-tools: {allowed_tools}
+{license_line}allowed-tools: {allowed_tools}
 metadata:
 {metadata_block}
 ---
@@ -367,14 +369,14 @@ def _render_template_multi(
         f"  skill_fit_verdict: \"{opp.assessment.skill_fit_verdict if opp.assessment else 'unknown'}\""
     )
 
+    license_line = f"license: {ctx.skill_license}\n" if ctx.skill_license else ""
     return f"""---
 name: {name}
 description: >-
   Multi-source skill for {skill_type_display.lower()} tasks, compiled from
   {len(ctx.sources)} sources. Use when performing {skill_type_display.lower()}
   tasks drawing on multiple reference documents.
-license: Apache-2.0
-allowed-tools: {allowed_tools}
+{license_line}allowed-tools: {allowed_tools}
 metadata:
 {metadata_block}
 ---

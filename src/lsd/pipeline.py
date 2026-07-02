@@ -16,6 +16,7 @@ Pre-release fix:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from lsd.backends import get_visual_backend
@@ -38,7 +39,8 @@ from lsd.writer import write_package
 
 log = logging.getLogger(__name__)
 
-DEFAULT_TOKEN_THRESHOLD = 50_000
+# ponytail: reads LSD_TOKEN_THRESHOLD env var; default unchanged when unset
+DEFAULT_TOKEN_THRESHOLD: int = int(os.environ.get("LSD_TOKEN_THRESHOLD", "50000"))
 
 
 def prepare(
@@ -59,6 +61,7 @@ def build(
     output_dir: Path,
     mode_override: IngestionMode | None = None,
     routing: tuple | None = None,
+    skill_license: str | None = None,
 ) -> Path:
     if routing is None:
         routing = prepare(url, mode_override)
@@ -86,6 +89,7 @@ def build(
         opportunity_map=opportunity_map,
         output_dir=output_dir,
         estimated_tokens=estimated_tokens,
+        skill_license=skill_license,
     )
 
     return write_package(ctx)

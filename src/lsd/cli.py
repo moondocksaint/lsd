@@ -78,6 +78,11 @@ def main() -> None:
     default=None,
     help="Override skill name slug in generated SKILL.md frontmatter.",
 )
+@click.option(
+    "--license", "skill_license",
+    default=None,
+    help="SPDX license identifier for the generated SKILL.md (e.g. Apache-2.0, MIT). Omitted by default.",
+)
 def build_cmd(
     urls: tuple[str, ...],
     output: Optional[str],
@@ -86,6 +91,7 @@ def build_cmd(
     retrieval_backend: Optional[str],
     token_threshold: int,
     name: Optional[str],
+    skill_license: Optional[str],
 ) -> None:
     """Build a skill package from one or more URLs."""
     console.print(Panel.fit(
@@ -128,6 +134,7 @@ def build_cmd(
                     retrieval_backend_name=retrieval_backend,
                     token_threshold=token_threshold,
                 )
+                ctx.skill_license = skill_license  # ponytail: set after build; omits field when None
             except Exception as exc:
                 console.print(f"[red]Multi-source build failed:[/red] {exc}")
                 raise SystemExit(1) from exc
@@ -242,7 +249,8 @@ def build_cmd(
     ) as progress:
         progress.add_task("Building package...", total=None)
         try:
-            result_dir = build(url, out_dir, mode_override=mode_override, routing=routing)
+            result_dir = build(url, out_dir, mode_override=mode_override, routing=routing,
+                               skill_license=skill_license)
         except Exception as exc:
             console.print(f"[red]Build failed:[/red] {exc}")
             raise SystemExit(1) from exc
@@ -927,7 +935,7 @@ def eval_cmd(case_dir: str, expected_dir: Optional[str], output: Optional[str]) 
     ) as progress:
         progress.add_task("Running pipeline...", total=None)
         try:
-            result_dir = build(url, out_dir, mode_override=mode_override)
+            result_dir = build(url, out_dir, mode_override=mode_override, skill_license=None)
         except Exception as exc:
             console.print(f"[red]Pipeline failed:[/red] {exc}")
             raise SystemExit(1) from exc

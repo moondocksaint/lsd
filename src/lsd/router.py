@@ -19,7 +19,9 @@ HYBRID_URL_PATTERNS = [
     "pkg.go.dev",
 ]
 
-VISUAL_FIRST_URL_PATTERNS = [
+# ponytail: APP_DOMAINS exported so opportunity_mapper.py can import it —
+# single source of truth for "this URL is an interactive app".
+APP_DOMAINS = [
     "app.",
     "dashboard.",
     "console.",
@@ -28,6 +30,8 @@ VISUAL_FIRST_URL_PATTERNS = [
     "miro.com",
     "airtable.com",
 ]
+
+VISUAL_FIRST_URL_PATTERNS = APP_DOMAINS  # identical for now; extend here if non-app visual patterns emerge
 
 
 def route(

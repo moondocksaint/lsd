@@ -36,16 +36,21 @@ Provider selection (in priority order):
 
 Adding a new provider:
   1. Create lsd/llm/<name>.py implementing LLMBackend.
-  2. Add a branch in get_llm_backend() below.
-  3. Document the env vars in this docstring.
+  2. Register it in _REGISTRY below with a factory callable.
+  3. Add its default model to _DEFAULTS.
+  4. Document its env vars in this docstring.
   No other files need to change.
 """
 
 from __future__ import annotations
 
+import logging
 import os
+from typing import Callable
 
 from lsd.llm.base import LLMBackend
+
+log = logging.getLogger(__name__)
 
 # Default models per provider (overridden by LSD_MODEL)
 _DEFAULTS: dict[str, str] = {
@@ -54,31 +59,42 @@ _DEFAULTS: dict[str, str] = {
 }
 
 
+def _make_anthropic() -> LLMBackend | None:
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return None
+    model = os.environ.get("LSD_MODEL", _DEFAULTS["anthropic"])
+    from lsd.llm.anthropic import AnthropicBackend  # noqa: PLC0415
+    return AnthropicBackend(api_key=api_key, model=model)
+
+
+def _make_openai_compat() -> LLMBackend | None:
+    api_key = os.environ.get("LSD_LLM_API_KEY", "")
+    if not api_key:
+        return None
+    model = os.environ.get("LSD_MODEL", _DEFAULTS["openai-compat"])
+    base_url = os.environ.get("LSD_LLM_BASE_URL", "https://api.openai.com/v1")
+    from lsd.llm.openai_compat import OpenAICompatBackend  # noqa: PLC0415
+    return OpenAICompatBackend(api_key=api_key, model=model, base_url=base_url)
+
+
+# ponytail: registry pattern — adding a provider = one dict entry + one _make_* fn.
+# Same pattern as retrieval/__init__.py _REGISTRY.
+_REGISTRY: dict[str, Callable[[], LLMBackend | None]] = {
+    "anthropic": _make_anthropic,
+    "openai-compat": _make_openai_compat,
+}
+
+
 def get_llm_backend() -> LLMBackend | None:
     """Return the configured LLM backend, or None if no provider is available."""
     provider = os.environ.get("LSD_LLM_PROVIDER", "anthropic").lower()
-    model = os.environ.get("LSD_MODEL", _DEFAULTS.get(provider, ""))
-
-    if provider == "anthropic":
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            return None
-        from lsd.llm.anthropic import AnthropicBackend  # noqa: PLC0415
-        return AnthropicBackend(api_key=api_key, model=model)
-
-    if provider == "openai-compat":
-        api_key = os.environ.get("LSD_LLM_API_KEY", "")
-        base_url = os.environ.get("LSD_LLM_BASE_URL", "https://api.openai.com/v1")
-        if not api_key:
-            return None
-        from lsd.llm.openai_compat import OpenAICompatBackend  # noqa: PLC0415
-        return OpenAICompatBackend(api_key=api_key, model=model, base_url=base_url)
-
-    # Unknown provider — warn and return None so the build doesn't crash
-    import logging  # noqa: PLC0415
-    logging.getLogger(__name__).warning(
-        "Unknown LSD_LLM_PROVIDER=%r — falling back to heuristic skeleton. "
-        "Valid values: anthropic, openai-compat",
-        provider,
-    )
-    return None
+    factory = _REGISTRY.get(provider)
+    if factory is None:
+        log.warning(
+            "Unknown LSD_LLM_PROVIDER=%r — falling back to heuristic skeleton. "
+            "Available: %s",
+            provider, ", ".join(_REGISTRY),
+        )
+        return None
+    return factory()

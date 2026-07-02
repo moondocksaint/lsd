@@ -54,3 +54,21 @@ def test_mode_override_respected():
     )
     assert mode == "hybrid"
     assert "overridden" in notes
+
+
+def test_app_domains_exported():
+    from lsd.router import APP_DOMAINS
+    assert isinstance(APP_DOMAINS, list)
+    assert len(APP_DOMAINS) > 0
+
+
+def test_app_domains_contains_figma():
+    from lsd.router import APP_DOMAINS
+    assert "figma.com" in APP_DOMAINS
+
+
+def test_visual_first_url_patterns_includes_app_domains():
+    from lsd.router import APP_DOMAINS, VISUAL_FIRST_URL_PATTERNS
+    # VISUAL_FIRST_URL_PATTERNS is APP_DOMAINS (or a superset)
+    for domain in APP_DOMAINS:
+        assert domain in VISUAL_FIRST_URL_PATTERNS

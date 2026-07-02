@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 
+from lsd.router import APP_DOMAINS
 from lsd.models import (
     OpportunityMap,
     SkillCandidate,
@@ -54,12 +55,6 @@ _API_REFERENCE_PATTERNS = [
 _PIPELINE_PATTERNS = [
     r"airflow", r"prefect", r"dagster", r"dbt", r"pipeline",
     r"etl", r"batch", r"cron", r"scheduled", r"data-engineering",
-]
-
-# Sources for interactive dashboards and apps — visual only, not encodable as rules
-_APP_ONLY_PATTERNS = [
-    r"app\.", r"dashboard\.", r"console\.", r"studio\.",
-    r"figma\.com", r"miro\.com", r"airtable\.com",
 ]
 
 # Sources that are pure changelogs / release notes — high instability, low fit
@@ -98,7 +93,7 @@ def map_opportunities(fit: SourceFit, url: str) -> OpportunityMap:
     is_repo = any(p in url_lower for p in ["github.com", "gitlab.com"])
     is_api_ref = _matches_any(url, _API_REFERENCE_PATTERNS)
     is_pipeline = _matches_any(url, _PIPELINE_PATTERNS)
-    is_app_only = _matches_any(url, _APP_ONLY_PATTERNS)
+    is_app_only = any(d in url_lower for d in APP_DOMAINS)  # ponytail: plain substring, same as router.py
     is_changelog = _matches_any(url, _CHANGELOG_PATTERNS)
     is_marketing = _matches_any(url, _MARKETING_PATTERNS)
 
